@@ -15,6 +15,7 @@ import { Button } from '@/components/ui/Button'
 import { useEvents } from '@/hooks/useEvents'
 import { useEquipment } from '@/hooks/useEquipment'
 import { useCrew } from '@/hooks/useCrew'
+import { useBudgetSummary } from '@/hooks/useBudgetSummary'
 import { AppEvent } from '@/types/event'
 
 // ZAR formatter
@@ -52,6 +53,7 @@ export function Dashboard() {
     const { events, loading: eventsLoading } = useEvents()
     const { items, loading: equipLoading } = useEquipment()
     const { crew, loading: crewLoading } = useCrew()
+    const { eventTotals, totalBudget, loading: budgetLoading } = useBudgetSummary(events)
 
     const activeEvents = useMemo(
         () => events.filter((e) => e.status === 'active' || e.status === 'planning'),
@@ -102,11 +104,11 @@ export function Dashboard() {
                 />
                 <StatCard
                     label="Total Budget"
-                    value={eventsLoading ? '—' : zar(events.length * 280000)}
+                    value={budgetLoading ? '—' : zar(totalBudget)}
                     change="Across all active events"
                     changeDirection="neutral"
                     icon={<DollarSign size={18} />}
-                    loading={eventsLoading}
+                    loading={budgetLoading}
                 />
                 <StatCard
                     label="Equipment Items"
@@ -207,8 +209,7 @@ export function Dashboard() {
                         ) : (
                             <div className="space-y-4">
                                 {activeEvents.slice(0, 4).map((event) => {
-                                    const budgeted = 400000
-                                    const actual = event.budgetStatus === 'over-budget' ? 475000 : event.budgetStatus === 'pending' ? 0 : 312000
+                                    const totals = eventTotals[event.id] ?? { budgeted: 0, actual: 0 }
                                     return (
                                         <div key={event.id}>
                                             <div className="flex items-center justify-between mb-1">
@@ -217,7 +218,11 @@ export function Dashboard() {
                                                     {event.budgetStatus}
                                                 </Badge>
                                             </div>
-                                            <BudgetBar budgeted={budgeted} actual={actual} />
+                                            <BudgetBar budgeted={totals.budgeted} actual={totals.actual} />
+                                            <div className="flex justify-between mt-0.5">
+                                                <span className="text-[10px] text-ink4">{zar(totals.actual)} actual</span>
+                                                <span className="text-[10px] text-ink3">{zar(totals.budgeted)} budgeted</span>
+                                            </div>
                                         </div>
                                     )
                                 })}

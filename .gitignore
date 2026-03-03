@@ -3,6 +3,11 @@ node_modules/
 .pnp
 .pnp.js
 
+# Firebase Admin — NEVER commit service account keys
+scripts/serviceAccountKey.json
+serviceAccountKey.json
+
+
 # Build outputs
 dist/
 build/

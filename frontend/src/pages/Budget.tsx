@@ -1,23 +1,31 @@
 import React, { useState, useMemo } from 'react'
-import { Plus, DollarSign, TrendingUp, FileText, CheckCircle } from 'lucide-react'
+import {
+    Plus, DollarSign, TrendingUp, TrendingDown,
+    FileText, CheckCircle, ChevronRight, ChevronLeft,
+    AlertTriangle, Package
+} from 'lucide-react'
 import { Card, CardHeader, CardBody, CardFooter } from '@/components/ui/Card'
-import { Tabs } from '@/components/ui/Tabs'
 import { Badge } from '@/components/ui/Badge'
 import { Button } from '@/components/ui/Button'
 import { Modal } from '@/components/ui/Modal'
 import { Input, Select, Textarea } from '@/components/ui/Input'
-import { ProgressBar, BudgetBar } from '@/components/ui/ProgressBar'
+import { BudgetBar, ProgressBar } from '@/components/ui/ProgressBar'
+import { Tabs } from '@/components/ui/Tabs'
 import { useEvents } from '@/hooks/useEvents'
 import { useBudget } from '@/hooks/useBudget'
-import { useAppStore } from '@/store/useAppStore'
+import { useBudgetSummary } from '@/hooks/useBudgetSummary'
 import { BudgetLine, BudgetCategory, BudgetLineStatus } from '@/types/budget'
-import { Timestamp, serverTimestamp } from 'firebase/firestore'
+import { AppEvent } from '@/types/event'
 
+// ── Formatters ────────────────────────────────────────────────
 const zar = (n: number) =>
     new Intl.NumberFormat('en-ZA', { style: 'currency', currency: 'ZAR', maximumFractionDigits: 0 }).format(n)
 
-const categories: BudgetCategory[] = ['staging', 'av', 'lighting', 'labour', 'transport', 'catering', 'permits', 'decor', 'other']
-const statusColors: Record<BudgetLineStatus, any> = {
+const CATEGORIES: BudgetCategory[] = [
+    'staging', 'av', 'lighting', 'labour', 'transport', 'catering', 'permits', 'decor', 'other',
+]
+
+const STATUS_COLOR: Record<BudgetLineStatus, any> = {
     estimate: 'neutral',
     quoted: 'blue',
     approved: 'green',
@@ -25,15 +33,13 @@ const statusColors: Record<BudgetLineStatus, any> = {
     paid: 'neutral',
 }
 
-const quoteStatusLabels: Record<string, any> = {
-    estimate: 'neutral',
-    quoted: 'blue',
-    approved: 'green',
-    invoiced: 'amber',
-    paid: 'neutral',
+const CAT_ICONS: Record<string, string> = {
+    staging: '🏗', av: '🔊', lighting: '💡', labour: '👷',
+    transport: '🚛', catering: '🍽', permits: '📋', decor: '🎨', other: '📦',
 }
 
-function AddLineModal({ eventId, onClose }: { eventId: string; onClose: () => void }) {
+// ── Add Line Modal ─────────────────────────────────────────────
+function AddLineModal({ eventId, eventName, onClose }: { eventId: string; eventName: string; onClose: () => void }) {
     const { addLine } = useBudget(eventId)
     const [form, setForm] = useState({
         category: 'av' as BudgetCategory,
@@ -41,26 +47,30 @@ function AddLineModal({ eventId, onClose }: { eventId: string; onClose: () => vo
         supplier: '',
         budgeted: '',
         actual: '',
-        vatRate: '0.15',
+        vatRate: '15',
         quoteRef: '',
         status: 'estimate' as BudgetLineStatus,
         notes: '',
     })
+    const [submitting, setSubmitting] = useState(false)
 
     const budgeted = parseFloat(form.budgeted) || 0
     const actual = parseFloat(form.actual) || 0
-    const vat = budgeted * (parseFloat(form.vatRate) || 0.15)
+    const vatRate = (parseFloat(form.vatRate) || 15) / 100
+    const vatAmt = budgeted * vatRate
 
-    const handleSubmit = (e: React.FormEvent) => {
+    const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault()
+        setSubmitting(true)
         addLine.mutate({
             eventId,
+            eventName,
             category: form.category,
             description: form.description,
             supplier: form.supplier,
             budgeted,
             actual,
-            vatRate: parseFloat(form.vatRate) || 0.15,
+            vatRate: parseFloat(form.vatRate) || 15,
             quoteRef: form.quoteRef,
             status: form.status,
             attachmentUrl: '',
@@ -70,12 +80,16 @@ function AddLineModal({ eventId, onClose }: { eventId: string; onClose: () => vo
     }
 
     return (
-        <form onSubmit={handleSubmit} className="space-y-4">
+        <form id="add-line-form" onSubmit={handleSubmit} className="space-y-4">
             <div className="grid grid-cols-2 gap-4">
-                <Select label="Category" value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value as BudgetCategory })}>
-                    {categories.map((c) => <option key={c} value={c}>{c.charAt(0).toUpperCase() + c.slice(1)}</option>)}
+                <Select label="Category" value={form.category}
+                    onChange={(e) => setForm({ ...form, category: e.target.value as BudgetCategory })}>
+                    {CATEGORIES.map((c) => (
+                        <option key={c} value={c}>{CAT_ICONS[c]} {c.charAt(0).toUpperCase() + c.slice(1)}</option>
+                    ))}
                 </Select>
-                <Select label="Status" value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value as BudgetLineStatus })}>
+                <Select label="Status" value={form.status}
+                    onChange={(e) => setForm({ ...form, status: e.target.value as BudgetLineStatus })}>
                     <option value="estimate">Estimate</option>
                     <option value="quoted">Quoted</option>
                     <option value="approved">Approved</option>
@@ -83,40 +97,108 @@ function AddLineModal({ eventId, onClose }: { eventId: string; onClose: () => vo
                     <option value="paid">Paid</option>
                 </Select>
             </div>
-            <Input label="Description" value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} placeholder="e.g. FOH sound system package" required />
-            <Input label="Supplier" value={form.supplier} onChange={(e) => setForm({ ...form, supplier: e.target.value })} placeholder="e.g. SoundCo SA" />
+            <Input label="Description" value={form.description}
+                onChange={(e) => setForm({ ...form, description: e.target.value })}
+                placeholder="e.g. FOH sound system package" required />
+            <Input label="Supplier" value={form.supplier}
+                onChange={(e) => setForm({ ...form, supplier: e.target.value })}
+                placeholder="e.g. SoundCo SA" />
             <div className="grid grid-cols-2 gap-4">
-                <Input label="Budgeted (ZAR, excl VAT)" type="number" value={form.budgeted} onChange={(e) => setForm({ ...form, budgeted: e.target.value })} placeholder="0" required />
-                <Input label="Actual (ZAR, excl VAT)" type="number" value={form.actual} onChange={(e) => setForm({ ...form, actual: e.target.value })} placeholder="0" />
+                <Input label="Budgeted (ZAR excl VAT)" type="number" value={form.budgeted}
+                    onChange={(e) => setForm({ ...form, budgeted: e.target.value })}
+                    placeholder="0.00" required />
+                <Input label="Actual (ZAR excl VAT)" type="number" value={form.actual}
+                    onChange={(e) => setForm({ ...form, actual: e.target.value })}
+                    placeholder="0.00" />
             </div>
-            <Input label="Quote Reference" value={form.quoteRef} onChange={(e) => setForm({ ...form, quoteRef: e.target.value })} placeholder="QT-2026-001" />
-            <Textarea label="Notes" value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} placeholder="Additional notes…" rows={2} />
-            {/* VAT preview */}
+            <div className="grid grid-cols-2 gap-4">
+                <Input label="Quote Reference" value={form.quoteRef}
+                    onChange={(e) => setForm({ ...form, quoteRef: e.target.value })}
+                    placeholder="QT-2026-001" />
+                <Input label="VAT Rate (%)" type="number" value={form.vatRate}
+                    onChange={(e) => setForm({ ...form, vatRate: e.target.value })}
+                    placeholder="15" />
+            </div>
+            <Textarea label="Notes" value={form.notes}
+                onChange={(e) => setForm({ ...form, notes: e.target.value })}
+                placeholder="Additional notes…" rows={2} />
+
             {budgeted > 0 && (
-                <div className="bg-surface2 border border-border rounded-sm p-3 text-[12px] space-y-1">
-                    <div className="flex justify-between text-ink3"><span>Subtotal (ex VAT)</span><span>{zar(budgeted)}</span></div>
-                    <div className="flex justify-between text-ink3"><span>VAT @ 15%</span><span>{zar(vat)}</span></div>
-                    <div className="flex justify-between font-bold text-ink border-t border-border pt-1 mt-1"><span>Total (incl VAT)</span><span>{zar(budgeted + vat)}</span></div>
+                <div className="bg-surface2 border border-border rounded p-3 text-[12px] space-y-1">
+                    <div className="flex justify-between text-ink3"><span>Subtotal (excl VAT)</span><span>{zar(budgeted)}</span></div>
+                    <div className="flex justify-between text-ink3"><span>VAT @ {form.vatRate || 15}%</span><span>{zar(vatAmt)}</span></div>
+                    <div className="flex justify-between font-bold text-ink border-t border-border pt-1 mt-1">
+                        <span>Total (incl VAT)</span><span>{zar(budgeted + vatAmt)}</span>
+                    </div>
                 </div>
             )}
         </form>
     )
 }
 
-export function Budget() {
-    const [tab, setTab] = useState('events')
-    const [addModal, setAddModal] = useState(false)
-    const { events, loading: eventsLoading } = useEvents()
-    const { selectedEventId, setSelectedEvent } = useAppStore()
-    const eventId = selectedEventId || events[0]?.id || ''
-    const { lines, loading: linesLoading, totals } = useBudget(eventId)
+// ── Event Summary Card (top-level list view) ──────────────────
+function EventCard({
+    event, budgeted, actual, onClick,
+}: { event: AppEvent; budgeted: number; actual: number; onClick: () => void }) {
+    const overBudget = actual > budgeted && actual > 0
+    const variance = actual - budgeted
 
-    const tabs = [
-        { key: 'events', label: 'Event Budgets' },
-        { key: 'quotes', label: 'Vendor Quotes' },
-        { key: 'categories', label: 'Cost Categories' },
-        { key: 'invoices', label: 'Invoices & POs' },
-    ]
+    return (
+        <button
+            onClick={onClick}
+            className="w-full text-left group bg-surface border border-border rounded hover:border-brand hover:shadow-sm transition-all p-5 flex flex-col gap-3"
+        >
+            <div className="flex items-start justify-between gap-2">
+                <div>
+                    <div className="text-[14px] font-bold text-ink group-hover:text-brand transition-colors">
+                        {event.name}
+                    </div>
+                    <div className="text-[12px] text-ink3 mt-0.5">
+                        {event.clientName} · {event.venue}
+                    </div>
+                </div>
+                <div className="flex items-center gap-1.5 flex-shrink-0">
+                    {overBudget && (
+                        <Badge variant="red">
+                            <AlertTriangle size={10} className="mr-0.5 inline" />
+                            Over-budget
+                        </Badge>
+                    )}
+                    {!overBudget && actual > 0 && <Badge variant="green">On-track</Badge>}
+                    {actual === 0 && <Badge variant="amber">Estimate</Badge>}
+                    <ChevronRight size={14} className="text-ink4 group-hover:text-brand transition-colors" />
+                </div>
+            </div>
+
+            {/* Budget bar */}
+            <div>
+                <BudgetBar budgeted={budgeted} actual={actual} />
+                <div className="flex justify-between mt-1 text-[11px]">
+                    <span className="text-ink4">
+                        Actual: <span className={overBudget ? 'text-red font-semibold' : 'text-ink3'}>{zar(actual)}</span>
+                    </span>
+                    <span className="text-ink4">Budget: {zar(budgeted)}</span>
+                </div>
+            </div>
+
+            {/* Variance pill */}
+            {actual > 0 && (
+                <div className={`text-[11px] flex items-center gap-1 font-semibold ${overBudget ? 'text-red' : 'text-green'}`}>
+                    {overBudget
+                        ? <><TrendingUp size={12} /> {zar(Math.abs(variance))} over budget</>
+                        : <><TrendingDown size={12} /> {zar(Math.abs(variance))} under budget</>
+                    }
+                </div>
+            )}
+        </button>
+    )
+}
+
+// ── Drill-down: single event budget ───────────────────────────
+function EventBudgetDetail({
+    event, onBack, onAddLine,
+}: { event: AppEvent; onBack: () => void; onAddLine: () => void }) {
+    const { lines, loading, totals } = useBudget(event.id)
 
     const grouped = useMemo(() => {
         const map: Record<string, BudgetLine[]> = {}
@@ -127,136 +209,187 @@ export function Budget() {
         return map
     }, [lines])
 
-    const currentEvent = events.find((e) => e.id === eventId)
+    const totalBudgeted = totals.budgeted
+    const totalActual = totals.actual
+    const vatAmount = totalBudgeted * 0.15
+    const overBudget = totalActual > totalBudgeted && totalActual > 0
 
     return (
         <div className="space-y-4">
-            {/* Event selector */}
-            {events.length > 0 && (
-                <div className="flex items-center gap-2 flex-wrap">
-                    {events.map((e) => (
-                        <button
-                            key={e.id}
-                            onClick={() => setSelectedEvent(e.id)}
-                            className={`px-3 py-1.5 rounded-sm text-[12px] font-semibold transition-all border cursor-pointer ${e.id === eventId
-                                    ? 'bg-brand text-white border-brand'
-                                    : 'bg-surface text-ink2 border-border hover:border-brand hover:text-brand'
-                                }`}
-                        >
-                            {e.name}
-                        </button>
-                    ))}
+            {/* Header row */}
+            <div className="flex items-center justify-between">
+                <button
+                    onClick={onBack}
+                    className="flex items-center gap-1 text-[13px] text-ink3 hover:text-brand transition-colors cursor-pointer"
+                >
+                    <ChevronLeft size={14} /> All Events
+                </button>
+                <Button size="sm" variant="primary" icon={<Plus size={13} />} onClick={onAddLine}>
+                    Add Line
+                </Button>
+            </div>
+
+            {/* Event header card */}
+            <div className={`rounded border p-4 ${overBudget ? 'bg-red/5 border-red/30' : 'bg-surface border-border'}`}>
+                <div className="flex items-start justify-between">
+                    <div>
+                        <div className="text-[16px] font-bold text-ink">{event.name}</div>
+                        <div className="text-[12px] text-ink3">{event.clientName} · {event.venue}</div>
+                    </div>
+                    {overBudget && (
+                        <Badge variant="red">
+                            <AlertTriangle size={10} className="mr-1 inline" />
+                            Over-budget by {zar(totalActual - totalBudgeted)}
+                        </Badge>
+                    )}
+                    {!overBudget && totalActual > 0 && <Badge variant="green">On-track</Badge>}
+                    {totalActual === 0 && <Badge variant="amber">Estimates only</Badge>}
                 </div>
-            )}
+                <div className="mt-3">
+                    <BudgetBar budgeted={totalBudgeted} actual={totalActual} />
+                    <div className="flex justify-between mt-1 text-[11px] text-ink4">
+                        <span>Actual: {zar(totalActual)}</span>
+                        <span>Budget: {zar(totalBudgeted)}</span>
+                    </div>
+                </div>
+            </div>
 
-            <Tabs tabs={tabs} active={tab} onChange={setTab} />
-
-            {/* Tab: Event Budgets */}
-            {tab === 'events' && (
-                <div className="grid grid-cols-3 gap-4">
-                    {/* Budget lines */}
-                    <div className="col-span-2 space-y-4">
-                        {/* Summary card */}
-                        <Card>
-                            <CardHeader
-                                title={currentEvent?.name || 'Select an Event'}
-                                action={
-                                    <Button
-                                        size="sm"
-                                        variant="primary"
-                                        icon={<Plus size={13} />}
-                                        onClick={() => setAddModal(true)}
-                                        disabled={!eventId}
-                                    >
-                                        Add Line
-                                    </Button>
-                                }
-                            />
-                            {linesLoading ? (
-                                <CardBody>
-                                    {Array.from({ length: 4 }).map((_, i) => (
-                                        <div key={i} className="py-3 space-y-1.5">
-                                            <div className="skeleton h-3 w-32" />
-                                            <div className="skeleton h-2 w-full rounded-full" />
-                                        </div>
-                                    ))}
-                                </CardBody>
-                            ) : Object.keys(grouped).length === 0 ? (
-                                <CardBody>
-                                    <div className="py-10 text-center">
-                                        <DollarSign size={28} className="text-ink4 mx-auto mb-2" />
-                                        <p className="text-ink3 text-[13px] mb-3">No budget lines yet</p>
-                                        <Button size="sm" icon={<Plus size={13} />} onClick={() => setAddModal(true)} disabled={!eventId}>
-                                            Add first line item
-                                        </Button>
+            {/* Main grid */}
+            <div className="grid grid-cols-3 gap-4">
+                {/* Line items — 2 cols */}
+                <div className="col-span-2">
+                    <Card>
+                        {loading ? (
+                            <CardBody>
+                                {Array.from({ length: 5 }).map((_, i) => (
+                                    <div key={i} className="py-3 space-y-1.5">
+                                        <div className="skeleton h-3 w-40" />
+                                        <div className="skeleton h-3 w-full rounded" />
                                     </div>
-                                </CardBody>
-                            ) : (
-                                <div>
-                                    {Object.entries(grouped).map(([cat, catLines]) => {
-                                        const catBudgeted = catLines.reduce((s, l) => s + l.budgeted, 0)
-                                        const catActual = catLines.reduce((s, l) => s + l.actual, 0)
-                                        return (
-                                            <div key={cat}>
-                                                <div className="px-[18px] py-2 bg-surface2 border-b border-border flex items-center justify-between">
-                                                    <span className="text-[11px] font-bold text-ink3 uppercase tracking-wider">{cat}</span>
-                                                    <div className="flex items-center gap-3 text-[12px]">
-                                                        <span className="text-ink4">Budget: {zar(catBudgeted)}</span>
-                                                        <span className={catActual > catBudgeted ? 'text-red font-semibold' : 'text-green'}>
-                                                            Actual: {zar(catActual)}
-                                                        </span>
-                                                    </div>
-                                                </div>
-                                                {catLines.map((line) => (
-                                                    <div key={line.id} className="px-[18px] py-3 flex items-center gap-3 border-b border-border hover:bg-surface2 transition-colors">
-                                                        <div className="flex-1 min-w-0">
+                                ))}
+                            </CardBody>
+                        ) : Object.keys(grouped).length === 0 ? (
+                            <CardBody>
+                                <div className="py-12 text-center">
+                                    <DollarSign size={28} className="text-ink4 mx-auto mb-2" />
+                                    <p className="text-ink3 text-[13px] mb-3">No budget lines yet</p>
+                                    <Button size="sm" icon={<Plus size={13} />} onClick={onAddLine}>Add first line</Button>
+                                </div>
+                            </CardBody>
+                        ) : (
+                            <div>
+                                {/* Column headers */}
+                                <div className="px-[18px] py-2 grid grid-cols-[1fr_auto_auto_auto] gap-4 border-b border-border">
+                                    <span className="text-[10px] font-bold text-ink4 uppercase tracking-wider">Item / Supplier</span>
+                                    <span className="text-[10px] font-bold text-ink4 uppercase tracking-wider text-right">Budget</span>
+                                    <span className="text-[10px] font-bold text-ink4 uppercase tracking-wider text-right">Actual</span>
+                                    <span className="text-[10px] font-bold text-ink4 uppercase tracking-wider">Status</span>
+                                </div>
+
+                                {Object.entries(grouped).map(([cat, catLines]) => {
+                                    const catBudgeted = catLines.reduce((s, l) => s + l.budgeted, 0)
+                                    const catActual = catLines.reduce((s, l) => s + l.actual, 0)
+                                    const catOver = catActual > catBudgeted && catActual > 0
+                                    return (
+                                        <div key={cat}>
+                                            {/* Category header row */}
+                                            <div className={`px-[18px] py-2 grid grid-cols-[1fr_auto_auto_auto] gap-4 items-center ${catOver ? 'bg-red/5' : 'bg-surface2'} border-b border-border`}>
+                                                <span className="text-[11px] font-bold text-ink3 uppercase tracking-wider">
+                                                    {CAT_ICONS[cat]} {cat}
+                                                    {catOver && <span className="ml-2 text-red">↑ overrun</span>}
+                                                </span>
+                                                <span className="text-[11px] font-semibold text-ink3 text-right w-24">{zar(catBudgeted)}</span>
+                                                <span className={`text-[11px] font-bold text-right w-24 ${catOver ? 'text-red' : 'text-ink3'}`}>{zar(catActual)}</span>
+                                                <span className="w-16" />
+                                            </div>
+
+                                            {/* Line items */}
+                                            {catLines.map((line) => {
+                                                const lineOver = line.actual > line.budgeted && line.actual > 0
+                                                return (
+                                                    <div key={line.id}
+                                                        className="px-[18px] py-3 grid grid-cols-[1fr_auto_auto_auto] gap-4 items-center border-b border-border hover:bg-surface2 transition-colors"
+                                                    >
+                                                        <div>
                                                             <div className="text-[13px] font-medium text-ink">{line.description}</div>
-                                                            <div className="text-[11px] text-ink4">{line.supplier} {line.quoteRef ? `· ${line.quoteRef}` : ''}</div>
-                                                        </div>
-                                                        <div className="text-right flex-shrink-0">
-                                                            <div className="text-[13px] font-semibold text-ink">{zar(line.budgeted)}</div>
-                                                            <div className={`text-[11px] ${line.actual > line.budgeted ? 'text-red' : 'text-ink4'}`}>
-                                                                actual: {zar(line.actual)}
+                                                            <div className="text-[11px] text-ink4">
+                                                                {line.supplier}
+                                                                {line.quoteRef ? ` · ${line.quoteRef}` : ''}
                                                             </div>
                                                         </div>
-                                                        <Badge variant={statusColors[line.status]}>{line.status}</Badge>
+                                                        <div className="text-[13px] font-semibold text-ink text-right w-24">
+                                                            {zar(line.budgeted)}
+                                                        </div>
+                                                        <div className={`text-[13px] font-semibold text-right w-24 ${lineOver ? 'text-red' : line.actual > 0 ? 'text-ink' : 'text-ink4'}`}>
+                                                            {line.actual > 0 ? zar(line.actual) : '—'}
+                                                        </div>
+                                                        <div className="w-16">
+                                                            <Badge variant={STATUS_COLOR[line.status]}>
+                                                                {line.status}
+                                                            </Badge>
+                                                        </div>
                                                     </div>
-                                                ))}
-                                            </div>
-                                        )
-                                    })}
-                                </div>
-                            )}
-                            {totals.budgeted > 0 && (
-                                <CardFooter>
-                                    <div className="text-[12px] space-y-1 w-full">
-                                        <div className="flex justify-between text-ink3"><span>Subtotal (ex VAT)</span><span>{zar(totals.budgeted)}</span></div>
-                                        <div className="flex justify-between text-ink3"><span>VAT @ 15%</span><span>{zar(totals.vatAmount)}</span></div>
-                                        <div className="flex justify-between font-bold text-ink pt-1 border-t border-border mt-1"><span>TOTAL (incl VAT)</span><span>{zar(totals.budgeted + totals.vatAmount)}</span></div>
-                                    </div>
-                                </CardFooter>
-                            )}
-                        </Card>
-                    </div>
+                                                )
+                                            })}
+                                        </div>
+                                    )
+                                })}
 
-                    {/* Category breakdown */}
+                                {/* Totals footer */}
+                                {totalBudgeted > 0 && (
+                                    <CardFooter>
+                                        <div className="text-[12px] space-y-1.5 w-full max-w-xs ml-auto">
+                                            <div className="flex justify-between text-ink3">
+                                                <span>Subtotal (excl VAT)</span>
+                                                <span className="font-semibold">{zar(totalBudgeted)}</span>
+                                            </div>
+                                            <div className="flex justify-between text-ink3">
+                                                <span>VAT @ 15%</span>
+                                                <span>{zar(vatAmount)}</span>
+                                            </div>
+                                            <div className="flex justify-between font-bold text-ink border-t border-border pt-1.5 mt-1">
+                                                <span>TOTAL (incl VAT)</span>
+                                                <span className={overBudget ? 'text-red' : ''}>{zar(totalBudgeted + vatAmount)}</span>
+                                            </div>
+                                            {totalActual > 0 && (
+                                                <div className="flex justify-between text-ink3 pt-1 border-t border-border mt-1">
+                                                    <span>Actual incl VAT</span>
+                                                    <span className={`font-semibold ${overBudget ? 'text-red' : 'text-green'}`}>
+                                                        {zar(totalActual * 1.15)}
+                                                    </span>
+                                                </div>
+                                            )}
+                                        </div>
+                                    </CardFooter>
+                                )}
+                            </div>
+                        )}
+                    </Card>
+                </div>
+
+                {/* Category breakdown sidebar — 1 col */}
+                <div className="space-y-3">
                     <Card>
-                        <CardHeader title="Category Breakdown" />
+                        <CardHeader title="By Category" />
                         <CardBody>
                             {Object.keys(grouped).length === 0 ? (
-                                <div className="py-6 text-center text-ink4 text-[12px]">No data yet</div>
+                                <div className="py-4 text-center text-ink4 text-[12px]">No data</div>
                             ) : (
                                 <div className="space-y-4">
                                     {Object.entries(grouped).map(([cat, catLines]) => {
-                                        const budget = catLines.reduce((s, l) => s + l.budgeted, 0)
-                                        const actual = catLines.reduce((s, l) => s + l.actual, 0)
+                                        const b = catLines.reduce((s, l) => s + l.budgeted, 0)
+                                        const a = catLines.reduce((s, l) => s + l.actual, 0)
                                         return (
                                             <div key={cat}>
                                                 <div className="flex justify-between mb-1">
-                                                    <span className="text-[12px] font-semibold text-ink capitalize">{cat}</span>
-                                                    <span className="text-[11px] text-ink4">{zar(budget)}</span>
+                                                    <span className="text-[12px] font-semibold text-ink capitalize">
+                                                        {CAT_ICONS[cat]} {cat}
+                                                    </span>
+                                                    <span className={`text-[11px] font-semibold ${a > b && a > 0 ? 'text-red' : 'text-ink4'}`}>
+                                                        {a > 0 ? zar(a) : zar(b)}
+                                                    </span>
                                                 </div>
-                                                <ProgressBar value={actual} max={budget} showLabel />
+                                                <BudgetBar budgeted={b} actual={a} />
                                             </div>
                                         )
                                     })}
@@ -264,134 +397,177 @@ export function Budget() {
                             )}
                         </CardBody>
                     </Card>
+
+                    {/* Quick stats */}
+                    <Card>
+                        <CardBody>
+                            <div className="space-y-3 text-[12px]">
+                                <div className="flex justify-between">
+                                    <span className="text-ink3">Line items</span>
+                                    <span className="font-semibold text-ink">{lines.length}</span>
+                                </div>
+                                <div className="flex justify-between">
+                                    <span className="text-ink3">Approved</span>
+                                    <span className="font-semibold text-green">
+                                        {lines.filter(l => l.status === 'approved').length}
+                                    </span>
+                                </div>
+                                <div className="flex justify-between">
+                                    <span className="text-ink3">Invoiced / Paid</span>
+                                    <span className="font-semibold text-amber">
+                                        {lines.filter(l => l.status === 'invoiced' || l.status === 'paid').length}
+                                    </span>
+                                </div>
+                                <div className="flex justify-between">
+                                    <span className="text-ink3">Estimates</span>
+                                    <span className="font-semibold text-ink4">
+                                        {lines.filter(l => l.status === 'estimate').length}
+                                    </span>
+                                </div>
+                            </div>
+                        </CardBody>
+                    </Card>
+                </div>
+            </div>
+        </div>
+    )
+}
+
+// ── Main Budget page ───────────────────────────────────────────
+export function Budget() {
+    const { events, loading: eventsLoading } = useEvents()
+    const { eventTotals, loading: summaryLoading } = useBudgetSummary(events)
+
+    const [selectedEventId, setSelectedEventId] = useState<string | null>(null)
+    const [addModal, setAddModal] = useState(false)
+
+    const selectedEvent = events.find(e => e.id === selectedEventId)
+
+    const allLoading = eventsLoading || summaryLoading
+
+    // ── Drill-down view ─────────────────────────────────────
+    if (selectedEvent) {
+        return (
+            <>
+                <EventBudgetDetail
+                    event={selectedEvent}
+                    onBack={() => setSelectedEventId(null)}
+                    onAddLine={() => setAddModal(true)}
+                />
+                <Modal
+                    open={addModal}
+                    onClose={() => setAddModal(false)}
+                    title={`Add Budget Line — ${selectedEvent.name}`}
+                    size="md"
+                    footer={
+                        <>
+                            <Button variant="secondary" size="sm" onClick={() => setAddModal(false)}>Cancel</Button>
+                            <Button variant="primary" size="sm" type="submit" form="add-line-form">Add Line Item</Button>
+                        </>
+                    }
+                >
+                    <AddLineModal
+                        eventId={selectedEvent.id}
+                        eventName={selectedEvent.name}
+                        onClose={() => setAddModal(false)}
+                    />
+                </Modal>
+            </>
+        )
+    }
+
+    // ── All-events summary view ──────────────────────────────
+    const totalPortfolioBudget = Object.values(eventTotals).reduce((s, t) => s + t.budgeted, 0)
+    const totalPortfolioActual = Object.values(eventTotals).reduce((s, t) => s + t.actual, 0)
+
+    return (
+        <div className="space-y-5">
+            {/* Portfolio header */}
+            <div className="flex items-center justify-between">
+                <div>
+                    <div className="text-[13px] text-ink3">All Events · Budget Overview</div>
+                    {!allLoading && (
+                        <div className="text-[22px] font-serif font-semibold text-ink mt-0.5">
+                            {zar(totalPortfolioBudget)}
+                            <span className="text-[13px] font-sans font-normal text-ink3 ml-2">total portfolio budget</span>
+                        </div>
+                    )}
+                </div>
+                <div className="flex items-center gap-2">
+                    {!allLoading && (
+                        <div className="text-right">
+                            <div className="text-[12px] text-ink3">Actual spend</div>
+                            <div className={`text-[16px] font-bold ${totalPortfolioActual > totalPortfolioBudget ? 'text-red' : 'text-green'}`}>
+                                {zar(totalPortfolioActual)}
+                            </div>
+                        </div>
+                    )}
+                </div>
+            </div>
+
+            {/* Event cards */}
+            {allLoading ? (
+                <div className="grid grid-cols-3 gap-4">
+                    {Array.from({ length: 3 }).map((_, i) => (
+                        <div key={i} className="bg-surface border border-border rounded p-5 space-y-3">
+                            <div className="skeleton h-4 w-40" />
+                            <div className="skeleton h-3 w-24" />
+                            <div className="skeleton h-2 w-full rounded-full" />
+                        </div>
+                    ))}
+                </div>
+            ) : events.length === 0 ? (
+                <div className="py-20 text-center">
+                    <DollarSign size={32} className="text-ink4 mx-auto mb-3" />
+                    <p className="text-ink3 text-[14px]">No events yet</p>
+                </div>
+            ) : (
+                <div className="grid grid-cols-3 gap-4">
+                    {events.map((event) => {
+                        const t = eventTotals[event.id] ?? { budgeted: 0, actual: 0 }
+                        return (
+                            <EventCard
+                                key={event.id}
+                                event={event}
+                                budgeted={t.budgeted}
+                                actual={t.actual}
+                                onClick={() => setSelectedEventId(event.id)}
+                            />
+                        )
+                    })}
                 </div>
             )}
 
-            {/* Tab: Vendor Quotes */}
-            {tab === 'quotes' && (
+            {/* Portfolio summary bar */}
+            {!allLoading && events.length > 0 && (
                 <Card>
-                    <CardHeader title="Vendor Quotes" action={<Button size="sm" icon={<Plus size={13} />} onClick={() => setAddModal(true)} disabled={!eventId}>New Quote</Button>} />
-                    <div className="overflow-x-auto">
-                        <table className="w-full text-[13px]">
-                            <thead>
-                                <tr className="border-b border-border">
-                                    {['Vendor', 'Event', 'Category', 'Quote (ZAR)', 'Ref', 'Status'].map((h) => (
-                                        <th key={h} className="px-4 py-3 text-left text-[11px] font-bold text-ink3 uppercase tracking-wide">{h}</th>
-                                    ))}
-                                </tr>
-                            </thead>
-                            <tbody className="divide-y divide-border">
-                                {linesLoading
-                                    ? Array.from({ length: 5 }).map((_, i) => (
-                                        <tr key={i}>
-                                            {Array.from({ length: 6 }).map((_, j) => (
-                                                <td key={j} className="px-4 py-3"><div className="skeleton h-4 w-full rounded" /></td>
-                                            ))}
-                                        </tr>
-                                    ))
-                                    : lines.length === 0
-                                        ? (
-                                            <tr>
-                                                <td colSpan={6} className="px-4 py-10 text-center text-ink4 text-[13px]">No quotes yet — add your first budget line</td>
-                                            </tr>
-                                        )
-                                        : lines.map((line) => (
-                                            <tr key={line.id} className="hover:bg-surface2 transition-colors">
-                                                <td className="px-4 py-3 font-medium text-ink">{line.supplier || '—'}</td>
-                                                <td className="px-4 py-3 text-ink3">{currentEvent?.name || '—'}</td>
-                                                <td className="px-4 py-3 capitalize text-ink3">{line.category}</td>
-                                                <td className="px-4 py-3 font-semibold text-ink">{zar(line.budgeted)}</td>
-                                                <td className="px-4 py-3 text-ink4">{line.quoteRef || '—'}</td>
-                                                <td className="px-4 py-3"><Badge variant={statusColors[line.status]}>{line.status}</Badge></td>
-                                            </tr>
-                                        ))
-                                }
-                            </tbody>
-                        </table>
-                    </div>
-                </Card>
-            )}
-
-            {/* Tab: Categories */}
-            {tab === 'categories' && (
-                <Card>
-                    <CardHeader title="Cost Categories — All Events" />
+                    <CardHeader title="Portfolio Spend vs Budget" />
                     <CardBody>
-                        <div className="space-y-5">
-                            {categories.map((cat) => {
-                                const catLines = lines.filter((l) => l.category === cat)
-                                const budget = catLines.reduce((s, l) => s + l.budgeted, 0)
-                                const actual = catLines.reduce((s, l) => s + l.actual, 0)
-                                if (budget === 0) return null
+                        <div className="space-y-4">
+                            {events.map((event) => {
+                                const t = eventTotals[event.id] ?? { budgeted: 0, actual: 0 }
                                 return (
-                                    <div key={cat}>
-                                        <div className="flex items-center justify-between mb-2">
-                                            <span className="text-[13px] font-semibold text-ink capitalize">{cat}</span>
-                                            <div className="flex items-center gap-4 text-[12px]">
-                                                <span className="text-ink4">Budget: {zar(budget)}</span>
-                                                <span className={actual > budget ? 'text-red font-semibold' : 'text-ink3'}>Actual: {zar(actual)}</span>
+                                    <div key={event.id}>
+                                        <div className="flex items-center justify-between mb-1">
+                                            <button
+                                                onClick={() => setSelectedEventId(event.id)}
+                                                className="text-[13px] font-semibold text-ink hover:text-brand transition-colors cursor-pointer"
+                                            >
+                                                {event.name}
+                                            </button>
+                                            <div className="flex items-center gap-2 text-[11px] text-ink4">
+                                                <span>{zar(t.actual)} spent</span>
+                                                <span className="text-ink5">/ {zar(t.budgeted)} budget</span>
                                             </div>
                                         </div>
-                                        <BudgetBar budgeted={budget} actual={actual} />
+                                        <BudgetBar budgeted={t.budgeted} actual={t.actual} />
                                     </div>
                                 )
-                            }).filter(Boolean)}
-                            {lines.length === 0 && (
-                                <div className="py-8 text-center text-ink4 text-[13px]">No budget data yet</div>
-                            )}
+                            })}
                         </div>
                     </CardBody>
                 </Card>
             )}
-
-            {/* Tab: Invoices */}
-            {tab === 'invoices' && (
-                <Card>
-                    <CardHeader title="Invoices & Purchase Orders" />
-                    <div className="divide-y divide-border">
-                        {lines.filter((l) => l.status === 'invoiced' || l.status === 'paid').length === 0 ? (
-                            <div className="py-12 text-center">
-                                <FileText size={28} className="text-ink4 mx-auto mb-2" />
-                                <p className="text-ink3 text-[13px]">No invoiced items yet</p>
-                                <p className="text-ink4 text-[12px] mt-1">Mark budget lines as "invoiced" or "paid" to track here</p>
-                            </div>
-                        ) : (
-                            lines.filter((l) => l.status === 'invoiced' || l.status === 'paid').map((line) => (
-                                <div key={line.id} className="px-[18px] py-4 flex items-center gap-4 hover:bg-surface2 transition-colors">
-                                    <CheckCircle size={16} className={line.status === 'paid' ? 'text-green' : 'text-amber'} />
-                                    <div className="flex-1">
-                                        <div className="text-[13px] font-medium text-ink">{line.description}</div>
-                                        <div className="text-[11px] text-ink4">{line.supplier} · {line.quoteRef}</div>
-                                    </div>
-                                    <div className="text-right">
-                                        <div className="text-[13px] font-semibold text-ink">{zar(line.actual || line.budgeted)}</div>
-                                        <div className="text-[11px] text-ink4">incl VAT: {zar((line.actual || line.budgeted) * 1.15)}</div>
-                                    </div>
-                                    <Badge variant={statusColors[line.status]}>{line.status}</Badge>
-                                </div>
-                            ))
-                        )}
-                    </div>
-                </Card>
-            )}
-
-            {/* Add Line Modal */}
-            <Modal
-                open={addModal}
-                onClose={() => setAddModal(false)}
-                title="Add Budget Line"
-                size="md"
-                footer={
-                    <>
-                        <Button variant="secondary" size="sm" onClick={() => setAddModal(false)}>Cancel</Button>
-                        <Button variant="primary" size="sm" type="submit" form="add-line-form">Add Line Item</Button>
-                    </>
-                }
-            >
-                <form id="add-line-form">
-                    <AddLineModal eventId={eventId} onClose={() => setAddModal(false)} />
-                </form>
-            </Modal>
         </div>
     )
 }

@@ -2,7 +2,7 @@ import React from 'react'
 import { NavLink, useLocation } from 'react-router-dom'
 import {
     LayoutDashboard, DollarSign, Package, CalendarDays,
-    FileText, Layers, Settings, Zap
+    FileText, Layers, Settings, Zap, ShieldCheck
 } from 'lucide-react'
 import { useAuthStore } from '@/store/useAuthStore'
 import { Avatar } from '@/components/ui/Avatar'
@@ -64,7 +64,24 @@ export function Sidebar() {
                 <div className="text-[9.5px] font-bold text-ink4 uppercase tracking-widest px-2 mt-6 mb-2">
                     Admin
                 </div>
-                <ul>
+                <ul className="space-y-0.5">
+                    {role === 'admin' && (
+                        <li>
+                            <NavLink
+                                to="/admin"
+                                className={({ isActive }) =>
+                                    `flex items-center gap-2.5 px-3 py-2 rounded-sm text-[13px] font-medium transition-all
+                    ${isActive
+                                        ? 'bg-red-50 text-red-700 border-l-[3px] border-red-600 pl-[9px]'
+                                        : 'text-ink2 hover:bg-bg2 hover:text-ink border-l-[3px] border-transparent pl-[9px]'
+                                    }`
+                                }
+                            >
+                                <ShieldCheck size={15} className="flex-shrink-0" />
+                                Admin Panel
+                            </NavLink>
+                        </li>
+                    )}
                     <li>
                         <NavLink
                             to="/settings"

@@ -15,6 +15,7 @@ import { Timeline } from '@/pages/Timeline'
 import { Proposals } from '@/pages/Proposals'
 import { Visual } from '@/pages/Visual'
 import { Settings } from '@/pages/Settings'
+import { Admin } from '@/pages/Admin'
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -43,6 +44,7 @@ export default function App() {
             <Route path="/proposals" element={<Proposals />} />
             <Route path="/visual" element={<Visual />} />
             <Route path="/settings" element={<Settings />} />
+            <Route path="/admin" element={<Admin />} />
           </Route>
 
           {/* Fallback */}

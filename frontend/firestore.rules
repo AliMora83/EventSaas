@@ -1,17 +1,118 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Allow authenticated users full access to their org data
-    match /organisations/{orgId}/{document=**} {
-      allow read, write: if request.auth != null;
+
+    // ── Helper functions ───────────────────────────────────────────────────
+    function isSignedIn() {
+      return request.auth != null;
     }
-    // Top-level users collection for auth lookup
+
+    function userRole(orgId) {
+      return get(/databases/$(database)/documents/organisations/$(orgId)/users/$(request.auth.uid)).data.role;
+    }
+
+    function isAdmin(orgId) {
+      return isSignedIn() && userRole(orgId) == 'admin';
+    }
+
+    function isMember(orgId) {
+      return isSignedIn() && userRole(orgId) in ['admin', 'editor', 'viewer'];
+    }
+
+    function isEditor(orgId) {
+      return isSignedIn() && userRole(orgId) in ['admin', 'editor'];
+    }
+
+    // ── Top-level users collection (auth bootstrap lookup) ─────────────────
     match /users/{uid} {
-      allow read, write: if request.auth != null && request.auth.uid == uid;
+      allow read: if isSignedIn() && request.auth.uid == uid;
+      allow write: if isSignedIn() && request.auth.uid == uid;
     }
-    // Alerts are org-scoped
-    match /organisations/{orgId}/alerts/{alertId} {
-      allow read, write: if request.auth != null;
+
+    // ── Organisation data ──────────────────────────────────────────────────
+    match /organisations/{orgId} {
+
+      // Org root — admin only
+      allow read, write: if isAdmin(orgId);
+
+      // ── Events ────────────────────────────────────────────────────────────
+      match /events/{eventId} {
+        allow read:   if isMember(orgId);
+        allow create: if isEditor(orgId);
+        allow update: if isEditor(orgId);
+        allow delete: if isAdmin(orgId);
+
+        // Budget lines — sub-collection of events
+        match /budgetLines/{lineId} {
+          allow read:   if isMember(orgId);
+          allow create: if isEditor(orgId);
+          allow update: if isEditor(orgId);
+          allow delete: if isAdmin(orgId);
+        }
+
+        // Proposals — sub-collection of events
+        match /proposals/{propId} {
+          allow read:   if isMember(orgId);
+          allow create: if isEditor(orgId);
+          allow update: if isEditor(orgId);
+          allow delete: if isAdmin(orgId);
+        }
+      }
+
+      // ── Equipment ─────────────────────────────────────────────────────────
+      match /equipment/{itemId} {
+        allow read:   if isMember(orgId);
+        allow create: if isEditor(orgId);
+        allow update: if isEditor(orgId);
+        allow delete: if isAdmin(orgId);
+      }
+
+      // ── Crew ──────────────────────────────────────────────────────────────
+      match /crew/{memberId} {
+        allow read:   if isMember(orgId);
+        allow create: if isEditor(orgId);
+        allow update: if isEditor(orgId);
+        allow delete: if isAdmin(orgId);
+      }
+
+      // ── Alerts ────────────────────────────────────────────────────────────
+      match /alerts/{alertId} {
+        allow read:   if isMember(orgId);
+        allow create: if isEditor(orgId);
+        allow update: if isEditor(orgId);
+        allow delete: if isAdmin(orgId);
+      }
+
+      // ── Users (org members) ───────────────────────────────────────────────
+      // Admins manage all; users can read their own record
+      match /users/{userId} {
+        allow read:   if isAdmin(orgId) || request.auth.uid == userId;
+        allow create: if isAdmin(orgId);
+        allow update: if isAdmin(orgId);
+        allow delete: if isAdmin(orgId);
+      }
+
+      // ── Audit Log — APPEND ONLY, never update or delete ───────────────────
+      match /auditLog/{entryId} {
+        allow read:   if isAdmin(orgId);
+        allow create: if isMember(orgId);  // editors can write audit entries
+        allow update: if false;            // immutable — append only
+        allow delete: if false;            // immutable — append only
+      }
+
+      // ── Feature Flags — admin only ────────────────────────────────────────
+      match /featureFlags/{flagDoc} {
+        allow read:   if isMember(orgId);
+        allow write:  if isAdmin(orgId);
+      }
+
+      // ── Budget Lines (top-level collection) ───────────────────────────────
+      match /budgetLines/{lineId} {
+        allow read:   if isMember(orgId);
+        allow create: if isEditor(orgId);
+        allow update: if isEditor(orgId);
+        allow delete: if isAdmin(orgId);
+      }
     }
   }
 }

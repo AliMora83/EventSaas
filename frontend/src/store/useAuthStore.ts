@@ -37,15 +37,17 @@ export function initAuthListener() {
             if (user) {
                 setUser(user)
                 try {
-                    const userDoc = await getDoc(doc(db, 'users', user.uid))
+                    const orgId = import.meta.env.VITE_ORG_ID || 'namka-events'
+                    const userDoc = await getDoc(doc(db, 'organisations', orgId, 'users', user.uid))
                     if (userDoc.exists()) {
                         const data = userDoc.data()
-                        setOrg(data.orgId, data.role)
+                        setOrg(orgId, data.role || 'viewer')
                     } else {
-                        setOrg(import.meta.env.VITE_ORG_ID || 'namka-events', 'admin')
+                        setOrg(orgId, 'viewer')
                     }
-                } catch {
-                    setOrg(import.meta.env.VITE_ORG_ID || 'namka-events', 'admin')
+                } catch (err) {
+                    console.error('Failed to fetch user role:', err)
+                    setOrg(import.meta.env.VITE_ORG_ID || 'namka-events', 'viewer')
                 }
             } else {
                 reset()

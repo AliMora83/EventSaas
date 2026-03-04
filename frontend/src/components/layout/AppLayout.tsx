@@ -4,6 +4,7 @@ import { Sidebar } from './Sidebar'
 import { Topbar } from './Topbar'
 import { ToastContainer } from '@/components/ui/Alert'
 import { useAuthStore } from '@/store/useAuthStore'
+import { AIAssistantDrawer } from '@/components/ai/AIAssistantDrawer'
 
 export function AppLayout() {
     const { user, isLoading } = useAuthStore()
@@ -35,6 +36,7 @@ export function AppLayout() {
                     <Outlet />
                 </main>
             </div>
+            <AIAssistantDrawer />
             <ToastContainer />
         </div>
     )

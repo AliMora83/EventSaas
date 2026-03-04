@@ -14,8 +14,11 @@ import { Tabs } from '@/components/ui/Tabs'
 import { useEvents } from '@/hooks/useEvents'
 import { useBudget } from '@/hooks/useBudget'
 import { useBudgetSummary } from '@/hooks/useBudgetSummary'
+import { useAuthStore } from '@/store/useAuthStore'
 import { BudgetLine, BudgetCategory, BudgetLineStatus } from '@/types/budget'
 import { AppEvent } from '@/types/event'
+import { AIBudgetEstimator } from '@/components/budget/AIBudgetEstimator'
+import { BudgetTableRow } from '@/components/budget/BudgetTableRow'
 
 // ── Formatters ────────────────────────────────────────────────
 const zar = (n: number) =>
@@ -198,7 +201,10 @@ function EventCard({
 function EventBudgetDetail({
     event, onBack, onAddLine,
 }: { event: AppEvent; onBack: () => void; onAddLine: () => void }) {
-    const { lines, loading, totals } = useBudget(event.id)
+    const { lines, loading, totals, updateLine, deleteLine } = useBudget(event.id)
+    const { role } = useAuthStore()
+    const isAdmin = role === 'admin'
+    const [editingLineId, setEditingLineId] = useState<string | null>(null)
 
     const grouped = useMemo(() => {
         const map: Record<string, BudgetLine[]> = {}
@@ -224,10 +230,14 @@ function EventBudgetDetail({
                 >
                     <ChevronLeft size={14} /> All Events
                 </button>
-                <Button size="sm" variant="primary" icon={<Plus size={13} />} onClick={onAddLine}>
-                    Add Line
-                </Button>
+                {isAdmin && (
+                    <Button size="sm" variant="primary" icon={<Plus size={13} />} onClick={onAddLine}>
+                        Add Line
+                    </Button>
+                )}
             </div>
+
+            <AIBudgetEstimator eventId={event.id} eventName={event.name} />
 
             {/* Event header card */}
             <div className={`rounded border p-4 ${overBudget ? 'bg-red/5 border-red/30' : 'bg-surface border-border'}`}>
@@ -281,9 +291,9 @@ function EventBudgetDetail({
                                 {/* Column headers */}
                                 <div className="px-[18px] py-2 grid grid-cols-[1fr_auto_auto_auto] gap-4 border-b border-border">
                                     <span className="text-[10px] font-bold text-ink4 uppercase tracking-wider">Item / Supplier</span>
-                                    <span className="text-[10px] font-bold text-ink4 uppercase tracking-wider text-right">Budget</span>
-                                    <span className="text-[10px] font-bold text-ink4 uppercase tracking-wider text-right">Actual</span>
-                                    <span className="text-[10px] font-bold text-ink4 uppercase tracking-wider">Status</span>
+                                    <span className="text-[10px] font-bold text-ink4 uppercase tracking-wider text-right w-24">Budget</span>
+                                    <span className="text-[10px] font-bold text-ink4 uppercase tracking-wider text-right w-24">Actual</span>
+                                    <span className="text-[10px] font-bold text-ink4 uppercase tracking-wider w-24 text-right pr-6">Status</span>
                                 </div>
 
                                 {Object.entries(grouped).map(([cat, catLines]) => {
@@ -300,37 +310,27 @@ function EventBudgetDetail({
                                                 </span>
                                                 <span className="text-[11px] font-semibold text-ink3 text-right w-24">{zar(catBudgeted)}</span>
                                                 <span className={`text-[11px] font-bold text-right w-24 ${catOver ? 'text-red' : 'text-ink3'}`}>{zar(catActual)}</span>
-                                                <span className="w-16" />
+                                                <span className="w-24" />
                                             </div>
 
                                             {/* Line items */}
-                                            {catLines.map((line) => {
-                                                const lineOver = line.actual > line.budgeted && line.actual > 0
-                                                return (
-                                                    <div key={line.id}
-                                                        className="px-[18px] py-3 grid grid-cols-[1fr_auto_auto_auto] gap-4 items-center border-b border-border hover:bg-surface2 transition-colors"
-                                                    >
-                                                        <div>
-                                                            <div className="text-[13px] font-medium text-ink">{line.description}</div>
-                                                            <div className="text-[11px] text-ink4">
-                                                                {line.supplier}
-                                                                {line.quoteRef ? ` · ${line.quoteRef}` : ''}
-                                                            </div>
-                                                        </div>
-                                                        <div className="text-[13px] font-semibold text-ink text-right w-24">
-                                                            {zar(line.budgeted)}
-                                                        </div>
-                                                        <div className={`text-[13px] font-semibold text-right w-24 ${lineOver ? 'text-red' : line.actual > 0 ? 'text-ink' : 'text-ink4'}`}>
-                                                            {line.actual > 0 ? zar(line.actual) : '—'}
-                                                        </div>
-                                                        <div className="w-16">
-                                                            <Badge variant={STATUS_COLOR[line.status]}>
-                                                                {line.status}
-                                                            </Badge>
-                                                        </div>
-                                                    </div>
-                                                )
-                                            })}
+                                            {catLines.map((line) => (
+                                                <BudgetTableRow
+                                                    key={line.id}
+                                                    line={line}
+                                                    isAdmin={isAdmin}
+                                                    isEditing={editingLineId === line.id}
+                                                    onEdit={() => setEditingLineId(line.id)}
+                                                    onCancel={() => setEditingLineId(null)}
+                                                    onSave={(updatedData, oldData) => {
+                                                        updateLine.mutate({ id: line.id, data: updatedData, oldData })
+                                                        setEditingLineId(null)
+                                                    }}
+                                                    onDelete={(id, oldData) => {
+                                                        deleteLine.mutate({ id, oldData })
+                                                    }}
+                                                />
+                                            ))}
                                         </div>
                                     )
                                 })}

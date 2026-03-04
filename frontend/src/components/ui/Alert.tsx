@@ -13,16 +13,17 @@ const alertStyles: Record<AlertVariant, { bg: string; border: string; text: stri
 
 interface AlertBannerProps {
     variant: AlertVariant
-    message: string
+    message: React.ReactNode
+    icon?: React.ReactNode
     onDismiss?: () => void
     className?: string
 }
 
-export function AlertBanner({ variant, message, onDismiss, className = '' }: AlertBannerProps) {
+export function AlertBanner({ variant, message, icon, onDismiss, className = '' }: AlertBannerProps) {
     const style = alertStyles[variant]
     return (
         <div className={`flex items-center gap-3 px-4 py-3 rounded-sm border ${style.bg} ${style.border} ${style.text} ${className}`}>
-            {style.icon}
+            {icon || style.icon}
             <span className="flex-1 text-[13px] font-medium">{message}</span>
             {onDismiss && (
                 <button onClick={onDismiss} className="ml-2 opacity-60 hover:opacity-100 cursor-pointer">

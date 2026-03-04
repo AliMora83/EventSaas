@@ -53,7 +53,7 @@ export function Topbar() {
 
             {/* Avatar */}
             <Avatar
-                initials={user?.displayName?.slice(0, 2).toUpperCase() || 'AD'}
+                initials={user?.displayName?.split(" ").map(w => w[0]).join("").toUpperCase().slice(0, 2) || 'AD'}
                 size="sm"
                 className="cursor-pointer"
             />

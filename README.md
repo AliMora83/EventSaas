@@ -136,4 +136,4 @@ frontend/
 
 ## 📄 License
 
-Private — © 2026 Namka Events. All rights reserved.
+Private — © 2026 Namka. All rights reserved.

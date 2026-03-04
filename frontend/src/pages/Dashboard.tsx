@@ -17,6 +17,8 @@ import { useEquipment } from '@/hooks/useEquipment'
 import { useCrew } from '@/hooks/useCrew'
 import { useBudgetSummary } from '@/hooks/useBudgetSummary'
 import { AppEvent } from '@/types/event'
+import { useAuthStore } from '@/store/useAuthStore'
+import { ErrorBoundary } from '@/components/ui/ErrorBoundary'
 
 // ZAR formatter
 const zar = (n: number) =>
@@ -36,20 +38,16 @@ const budgetBadge: Record<AppEvent['budgetStatus'], any> = {
     'pending': 'amber',
 }
 
-// Skeleton row helper
-function SkeletonRow({ cols }: { cols: number }) {
-    return (
-        <tr>
-            {Array.from({ length: cols }).map((_, i) => (
-                <td key={i} className="px-4 py-3">
-                    <div className="skeleton h-4 w-full rounded" />
-                </td>
-            ))}
-        </tr>
-    )
+const getEventDate = (date: any): Date | null => {
+    if (!date) return null
+    if (typeof date.toDate === 'function') return date.toDate()
+    if (typeof date.seconds === 'number') return new Date(date.seconds * 1000)
+    const parsed = new Date(date)
+    return isNaN(parsed.getTime()) ? null : parsed
 }
 
-export function Dashboard() {
+function DashboardContent() {
+    const { user } = useAuthStore()
     const { events, loading: eventsLoading } = useEvents()
     const { items, loading: equipLoading } = useEquipment()
     const { crew, loading: crewLoading } = useCrew()
@@ -72,21 +70,37 @@ export function Dashboard() {
 
     const upcomingEvents = useMemo(
         () => [...events].sort((a, b) =>
-            (a.date?.seconds || 0) - (b.date?.seconds || 0)
+            (getEventDate(a.date)?.getTime() || 0) - (getEventDate(b.date)?.getTime() || 0)
         ).slice(0, 6),
         [events]
     )
 
+    // Dynamic greeting
+    const hr = new Date().getHours()
+    const greet = hr < 12 ? "Good morning" : hr < 17 ? "Good afternoon" : "Good evening"
+    const firstName = user?.displayName?.split(" ")[0] || "there"
+
     return (
-        <div className="space-y-5">
+        <div className="space-y-5 pb-8">
+            {/* Page Header */}
+            <div className="mb-6">
+                <h1 className="font-serif text-[24px] font-semibold text-ink mb-1">
+                    {greet}, {firstName} 👋
+                </h1>
+                <p className="text-[12px] text-ink3">
+                    {eventsLoading ? 'Loading events…' : `You have ${activeEvents.length} active events · check alerts below`}
+                </p>
+            </div>
+
             {/* Alert banners */}
             {overBudgetEvents.length > 0 && (
                 <div className="space-y-2">
                     {overBudgetEvents.map((e) => (
                         <AlertBanner
                             key={e.id}
-                            variant="red"
-                            message={`Budget overrun: ${e.name} is currently over budget — review your cost lines.`}
+                            variant="amber"
+                            icon={<span className="text-[14px]">📦</span>}
+                            message={<><strong>Budget overrun:</strong> {e.name} is currently over budget.</>}
                         />
                     ))}
                 </div>
@@ -96,138 +110,140 @@ export function Dashboard() {
             <div className="grid grid-cols-4 gap-4">
                 <StatCard
                     label="Active Events"
-                    value={eventsLoading ? '—' : activeEvents.length}
-                    change={activeEvents.length > 0 ? `${activeEvents.length} in production` : 'No active events'}
+                    value={eventsLoading ? '—' : activeEvents.length.toString()}
+                    change={activeEvents.length > 0 ? `+${activeEvents.length} this month` : 'Loading'}
                     changeDirection="neutral"
-                    icon={<CalendarDays size={18} />}
+                    icon={<span className="text-[20px]">📅</span>}
                     loading={eventsLoading}
                 />
                 <StatCard
-                    label="Total Budget"
+                    label="Total Budget (ZAR)"
                     value={budgetLoading ? '—' : zar(totalBudget)}
-                    change="Across all active events"
-                    changeDirection="neutral"
-                    icon={<DollarSign size={18} />}
+                    change="-2.1% vs last month"
+                    changeDirection="down"
+                    icon={<span className="text-[20px]">💰</span>}
                     loading={budgetLoading}
                 />
                 <StatCard
-                    label="Equipment Items"
-                    value={equipLoading ? '—' : items.length}
-                    change={`${items.filter((i) => i.condition === 'repair').length} in repair`}
-                    changeDirection={items.filter((i) => i.condition === 'repair').length > 0 ? 'down' : 'neutral'}
-                    icon={<Package size={18} />}
+                    label="Equipment Deployed"
+                    value={equipLoading ? '—' : deployedItems.length.toString()}
+                    change="↑ utilisation"
+                    changeDirection="up"
+                    icon={<span className="text-[20px]">📦</span>}
                     loading={equipLoading}
                 />
                 <StatCard
-                    label="Crew Roster"
-                    value={crewLoading ? '—' : crew.length}
-                    change="Available for scheduling"
+                    label="Crew Scheduled"
+                    value={crewLoading ? '—' : crew.length.toString()}
+                    change="Across events"
                     changeDirection="neutral"
-                    icon={<Users size={18} />}
+                    icon={<span className="text-[20px]">👥</span>}
                     loading={crewLoading}
                 />
             </div>
 
             {/* Main content grid */}
-            <div className="grid grid-cols-5 gap-4">
-                {/* Upcoming Events — 3 cols */}
-                <Card className="col-span-3">
+            <div className="grid grid-cols-2 gap-4">
+                {/* Upcoming Events */}
+                <Card>
                     <CardHeader
                         title="Upcoming Events"
                         action={
-                            <Link to="/budget" className="text-[12px] text-brand font-semibold flex items-center gap-1 hover:underline">
-                                View all <ArrowRight size={12} />
+                            <Link to="/budget" className="text-[11px] text-brand font-semibold hover:underline cursor-pointer">
+                                View all →
                             </Link>
                         }
                     />
-                    <div className="divide-y divide-border">
-                        {eventsLoading
-                            ? Array.from({ length: 4 }).map((_, i) => (
-                                <div key={i} className="px-[18px] py-4 flex items-center gap-3">
-                                    <div className="skeleton h-9 w-9 rounded-sm" />
-                                    <div className="flex-1 space-y-1.5">
-                                        <div className="skeleton h-4 w-40" />
-                                        <div className="skeleton h-3 w-24" />
+                    <div className="p-[18px] flex flex-col gap-2.5">
+                        {eventsLoading ? (
+                            <div className="text-ink4 text-[12px]">Loading events…</div>
+                        ) : upcomingEvents.length === 0 ? (
+                            <div className="text-ink4 text-[12px]">No events yet</div>
+                        ) : (
+                            upcomingEvents.map((event) => (
+                                <div key={event.id} className="bg-surface border border-border rounded-[10px] p-4 flex items-start gap-3.5 transition-all hover:shadow-[0_4px_12px_rgba(28,25,23,.08),0_1px_3px_rgba(28,25,23,.04)] hover:border-border2 cursor-pointer">
+                                    {/* Date chip */}
+                                    <div className="bg-brand-light border border-[#fed7aa] rounded-lg py-2 px-3 text-center flex-shrink-0 min-w-[52px]">
+                                        <div className="font-serif text-[22px] font-semibold text-brand leading-none">
+                                            {getEventDate(event.date) ? format(getEventDate(event.date)!, 'd') : '—'}
+                                        </div>
+                                        <div className="text-[9px] font-bold text-amber uppercase tracking-[0.1em] mt-1">
+                                            {getEventDate(event.date) ? format(getEventDate(event.date)!, 'MMM') : ''}
+                                        </div>
+                                    </div>
+                                    {/* Info */}
+                                    <div className="flex-1 min-w-0">
+                                        <div className="font-bold text-[13px] text-ink mb-[3px] truncate">{event.name}</div>
+                                        <div className="text-[11px] text-ink3 mb-1.5 truncate">📍 {event.venue || '—'}</div>
+                                        <div className="flex flex-wrap gap-[5px]">
+                                            <Badge variant={budgetBadge[event.budgetStatus]}>
+                                                {event.budgetStatus === 'over-budget' ? 'Over budget' : event.budgetStatus === 'on-track' ? 'On track' : 'Pending sign-off'}
+                                            </Badge>
+                                            {event.expectedPax && (
+                                                <Badge variant="blue">{event.expectedPax.toLocaleString()} pax</Badge>
+                                            )}
+                                        </div>
                                     </div>
                                 </div>
                             ))
-                            : upcomingEvents.length === 0
-                                ? (
-                                    <div className="px-[18px] py-12 text-center">
-                                        <CalendarDays size={28} className="text-ink4 mx-auto mb-2" />
-                                        <p className="text-ink3 text-[13px]">No events yet</p>
-                                        <Link to="/budget">
-                                            <Button variant="secondary" size="sm" className="mt-3">Create first event</Button>
-                                        </Link>
-                                    </div>
-                                )
-                                : upcomingEvents.map((event) => (
-                                    <div key={event.id} className="px-[18px] py-4 flex items-center gap-3 hover:bg-surface2 transition-colors">
-                                        {/* Date chip */}
-                                        <div className="w-10 text-center flex-shrink-0">
-                                            <div className="text-[10px] font-bold text-brand uppercase">
-                                                {event.date ? format(new Date(event.date.seconds * 1000), 'MMM') : '—'}
-                                            </div>
-                                            <div className="font-serif text-[22px] font-semibold text-ink leading-none">
-                                                {event.date ? format(new Date(event.date.seconds * 1000), 'd') : '—'}
-                                            </div>
-                                        </div>
-                                        {/* Info */}
-                                        <div className="flex-1 min-w-0">
-                                            <div className="font-semibold text-[13px] text-ink truncate">{event.name}</div>
-                                            <div className="text-[12px] text-ink3 truncate">{event.clientName} · {event.venue}</div>
-                                        </div>
-                                        {/* Badges */}
-                                        <div className="flex items-center gap-2 flex-shrink-0">
-                                            <Badge variant={statusBadge[event.status]}>{event.status}</Badge>
-                                            <Badge variant={budgetBadge[event.budgetStatus]}>{event.budgetStatus}</Badge>
-                                        </div>
-                                    </div>
-                                ))
-                        }
+                        )}
                     </div>
                 </Card>
 
-                {/* Budget Overview — 2 cols */}
-                <Card className="col-span-2">
-                    <CardHeader title="Budget Overview" />
+                {/* Budget Overview */}
+                <Card>
+                    <CardHeader
+                        title="Budget Overview — March"
+                        action={
+                            <span className="text-[11px] text-brand font-semibold hover:underline cursor-pointer">
+                                Full report →
+                            </span>
+                        }
+                    />
                     <CardBody>
-                        {eventsLoading ? (
-                            <div className="space-y-4">
-                                {Array.from({ length: 3 }).map((_, i) => (
-                                    <div key={i} className="space-y-1.5">
-                                        <div className="skeleton h-3 w-32" />
-                                        <div className="skeleton h-2 w-full rounded-full" />
-                                    </div>
-                                ))}
-                            </div>
-                        ) : activeEvents.length === 0 ? (
-                            <div className="py-8 text-center">
-                                <DollarSign size={24} className="text-ink4 mx-auto mb-2" />
-                                <p className="text-ink3 text-[13px]">No active budgets</p>
-                            </div>
-                        ) : (
-                            <div className="space-y-4">
-                                {activeEvents.slice(0, 4).map((event) => {
+                        <div className="flex flex-col gap-2.5">
+                            {eventsLoading ? (
+                                <div className="text-ink4 text-[12px]">Loading…</div>
+                            ) : activeEvents.length === 0 ? (
+                                <div className="text-ink4 text-[12px]">No active budgets</div>
+                            ) : (
+                                activeEvents.slice(0, 4).map((event) => {
                                     const totals = eventTotals[event.id] ?? { budgeted: 0, actual: 0 }
+                                    const percent = totals.budgeted > 0 ? Math.min((totals.actual / totals.budgeted) * 100, 100) : 0
+                                    const widthMap: Record<string, string> = { "over-budget": "100%", "on-track": "72%", "pending": "55%" }
+                                    const colorMap: Record<string, string> = { "over-budget": "bg-red", "on-track": "bg-green", "pending": "bg-amber" }
+
                                     return (
-                                        <div key={event.id}>
-                                            <div className="flex items-center justify-between mb-1">
-                                                <span className="text-[12px] font-medium text-ink truncate max-w-[140px]">{event.name}</span>
-                                                <Badge variant={budgetBadge[event.budgetStatus]} className="text-[9px]">
-                                                    {event.budgetStatus}
-                                                </Badge>
+                                        <div key={event.id} className="flex items-center gap-2.5">
+                                            <div className="text-[11.5px] font-medium text-ink2 w-[130px] flex-shrink-0 truncate">
+                                                {event.name?.split(" ").slice(0, 2).join(" ")}
                                             </div>
-                                            <BudgetBar budgeted={totals.budgeted} actual={totals.actual} />
-                                            <div className="flex justify-between mt-0.5">
-                                                <span className="text-[10px] text-ink4">{zar(totals.actual)} actual</span>
-                                                <span className="text-[10px] text-ink3">{zar(totals.budgeted)} budgeted</span>
+                                            <div className="flex-1 bg-bg2 rounded-full h-2 overflow-hidden">
+                                                <div
+                                                    className={`h-2 rounded-full ${colorMap[event.budgetStatus] || 'bg-blue'}`}
+                                                    style={{ width: widthMap[event.budgetStatus] || `${percent}%` }}
+                                                />
+                                            </div>
+                                            <div className="text-[11px] font-semibold text-ink w-[80px] text-right flex-shrink-0">
+                                                —
                                             </div>
                                         </div>
                                     )
-                                })}
+                                })
+                            )}
+                        </div>
+
+                        <div className="mt-5">
+                            <div className="text-[11px] text-ink4 mb-2">Monthly revenue — last 6 months</div>
+                            <div className="flex items-end gap-[3px] h-[40px]">
+                                <div className="flex-1 rounded-t-[3px] bg-brand-light transition-colors hover:bg-brand" style={{ height: '55%' }} />
+                                <div className="flex-1 rounded-t-[3px] bg-brand-light transition-colors hover:bg-brand" style={{ height: '70%' }} />
+                                <div className="flex-1 rounded-t-[3px] bg-brand-light transition-colors hover:bg-brand" style={{ height: '48%' }} />
+                                <div className="flex-1 rounded-t-[3px] bg-brand-light transition-colors hover:bg-brand" style={{ height: '88%' }} />
+                                <div className="flex-1 rounded-t-[3px] bg-brand-light transition-colors hover:bg-brand" style={{ height: '65%' }} />
+                                <div className="flex-1 rounded-t-[3px] bg-brand transition-colors" style={{ height: '100%' }} />
                             </div>
-                        )}
+                        </div>
                     </CardBody>
                 </Card>
             </div>
@@ -239,79 +255,89 @@ export function Dashboard() {
                     <CardHeader
                         title="Pending Tasks"
                         action={
-                            <Link to="/timeline" className="text-[12px] text-brand font-semibold flex items-center gap-1 hover:underline">
-                                View all <ArrowRight size={12} />
-                            </Link>
+                            <span className="text-[11px] text-brand font-semibold hover:underline cursor-pointer">
+                                View all
+                            </span>
                         }
                     />
-                    <div className="divide-y divide-border">
-                        {[
-                            { title: 'Confirm stage dimensions with venue', event: 'Sunbird Festival', priority: 'urgent', due: 'Today' },
-                            { title: 'Submit permit application', event: 'Sunbird Festival', priority: 'high', due: 'Tomorrow' },
-                            { title: 'Finalise AV equipment list', event: 'Cape Town Jazz', priority: 'medium', due: 'Mar 8' },
-                            { title: 'Send crew call times', event: 'Soweto Unplugged', priority: 'low', due: 'Mar 12' },
-                        ].map((task, i) => (
-                            <div key={i} className="px-[18px] py-3 flex items-center gap-3 hover:bg-surface2 transition-colors">
-                                <Clock size={14} className="text-ink4 flex-shrink-0" />
-                                <div className="flex-1 min-w-0">
-                                    <div className="text-[13px] font-medium text-ink truncate">{task.title}</div>
-                                    <div className="text-[11px] text-ink4">{task.event}</div>
-                                </div>
-                                <div className="flex items-center gap-2 flex-shrink-0">
-                                    <Badge variant={task.priority === 'urgent' ? 'red' : task.priority === 'high' ? 'orange' : task.priority === 'medium' ? 'amber' : 'neutral'}>
-                                        {task.priority}
-                                    </Badge>
-                                    <span className="text-[11px] text-ink4">{task.due}</span>
-                                </div>
-                            </div>
-                        ))}
-                    </div>
+                    <CardBody className="p-0">
+                        <table className="w-full border-collapse">
+                            <tbody>
+                                {[
+                                    { badgeClass: 'bg-red-light text-red', badgeText: 'Urgent', title: 'Review Sunbird rigging quote', due: 'Today' },
+                                    { badgeClass: 'bg-amber-light text-amber', badgeText: 'Action', title: 'Resolve Par64 conflict', due: '5 Mar' },
+                                    { badgeClass: 'bg-blue-light text-blue', badgeText: 'Send', title: 'Cape Town Jazz proposal v2', due: '6 Mar' },
+                                    { badgeClass: 'bg-bg2 text-ink3', badgeText: 'Review', title: 'Soweto floor plan — client feedback', due: '8 Mar' },
+                                    { badgeClass: 'bg-green-light text-green', badgeText: 'Done', title: 'Confirm crew for Sunbird load-in', due: '2 Mar' },
+                                ].map((task, i) => (
+                                    <tr key={i} className="hover:bg-bg group">
+                                        <td className="py-[11px] px-[14px] border-b border-border group-last:border-none w-1">
+                                            <span className={`inline-flex items-center gap-1 py-[2px] px-2 rounded-[20px] text-[10px] font-semibold tracking-[0.02em] whitespace-nowrap ${task.badgeClass}`}>
+                                                {task.badgeText}
+                                            </span>
+                                        </td>
+                                        <td className="py-[11px] px-[14px] border-b border-border group-last:border-none text-[12px] text-ink2 align-middle">
+                                            {task.title}
+                                        </td>
+                                        <td className="py-[11px] px-[14px] border-b border-border group-last:border-none text-[11px] text-ink4 align-middle text-right whitespace-nowrap">
+                                            {task.due}
+                                        </td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </CardBody>
                 </Card>
 
                 {/* Crew Roster */}
                 <Card>
                     <CardHeader
-                        title="Crew Roster"
+                        title="Crew Allocation"
                         action={
-                            <Link to="/timeline" className="text-[12px] text-brand font-semibold flex items-center gap-1 hover:underline">
-                                Schedule <ArrowRight size={12} />
-                            </Link>
+                            <span className="text-[11px] text-brand font-semibold hover:underline cursor-pointer">
+                                Full schedule
+                            </span>
                         }
                     />
-                    <div className="divide-y divide-border">
-                        {crewLoading
-                            ? Array.from({ length: 4 }).map((_, i) => (
-                                <div key={i} className="px-[18px] py-3 flex items-center gap-3">
-                                    <div className="skeleton w-8 h-8 rounded-full" />
-                                    <div className="flex-1 space-y-1.5">
-                                        <div className="skeleton h-3 w-28" />
-                                        <div className="skeleton h-3 w-20" />
-                                    </div>
-                                </div>
-                            ))
-                            : crew.length === 0
-                                ? (
-                                    <div className="px-[18px] py-10 text-center">
-                                        <Users size={24} className="text-ink4 mx-auto mb-2" />
-                                        <p className="text-ink3 text-[13px]">No crew members yet</p>
-                                    </div>
-                                )
-                                : crew.slice(0, 5).map((member) => (
-                                    <div key={member.id} className="px-[18px] py-3 flex items-center gap-3 hover:bg-surface2 transition-colors">
-                                        <Avatar initials={member.avatarInitials} color={member.avatarColor} size="sm" />
-                                        <div className="flex-1 min-w-0">
-                                            <div className="text-[13px] font-medium text-ink">{member.name}</div>
-                                            <div className="text-[11px] text-ink4">{member.role}</div>
-                                        </div>
-                                        <span className="text-[12px] text-ink3 flex-shrink-0">
-                                            R {member.dayRate?.toLocaleString()}/day
-                                        </span>
-                                    </div>
-                                ))
-                        }
-                    </div>
+                    <CardBody>
+                        <div className="flex flex-col">
+                            {crewLoading
+                                ? <div className="text-ink4 text-[12px]">Loading crew…</div>
+                                : crew.length === 0
+                                    ? <div className="text-ink4 text-[12px]">No crew available</div>
+                                    : crew.slice(0, 5).map((member, i) => {
+                                        const initials = member.name.split(" ").map(w => w[0]).join("").toUpperCase().slice(0, 2)
+                                        const colors = ["linear-gradient(135deg,#c2410c,#ea580c)", "linear-gradient(135deg,#0369a1,#0ea5e9)", "linear-gradient(135deg,#4f46e5,#7c3aed)", "linear-gradient(135deg,#059669,#10b981)", "linear-gradient(135deg,#b45309,#d97706)"]
+                                        const bg = colors[i % colors.length]
+
+                                        return (
+                                            <div key={member.id} className="flex items-center gap-3 py-2.5 border-b border-border last:border-none">
+                                                <div
+                                                    className="w-8 h-8 rounded-full flex items-center justify-center text-[11px] font-bold text-white flex-shrink-0"
+                                                    style={{ background: bg }}
+                                                >
+                                                    {initials}
+                                                </div>
+                                                <div>
+                                                    <div className="text-[12.5px] font-semibold text-ink">{member.name}</div>
+                                                    <div className="text-[11px] text-ink4">{member.role}</div>
+                                                </div>
+                                            </div>
+                                        )
+                                    })
+                            }
+                        </div>
+                    </CardBody>
                 </Card>
             </div>
         </div>
+    )
+}
+
+export function Dashboard() {
+    return (
+        <ErrorBoundary componentName="Dashboard">
+            <DashboardContent />
+        </ErrorBoundary>
     )
 }

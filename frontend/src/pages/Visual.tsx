@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react'
-import { Grid, Move, Square, Minus, Monitor, Volume2, Fence, Layers, Save, Download, Wand2, Users, Zap, Droplet, DoorOpen } from 'lucide-react'
+import { Grid, Move, Square, Minus, Monitor, Volume2, Fence, Layers, Save, Download, Wand2, Users, Zap, Droplet, DoorOpen, Undo2 } from 'lucide-react'
 import { useLayoutStore } from '@/store/layoutStore'
-import { generateLayoutFromDescription, generateLayoutFromTemplate } from '@/services/layoutService'
+import { generateLayoutFromDescription, generateLayoutFromTemplate, saveLayout } from '@/services/layoutService'
 import { ElementType, GenerateLayoutParams } from '@/types/layout'
+import { useAuthStore } from '@/store/useAuthStore'
 import AILayoutPanel from '@/components/visual/AILayoutPanel'
 import AILayoutSummary from '@/components/visual/AILayoutSummary'
 import { Card, CardHeader, CardBody } from '@/components/ui/Card'
@@ -29,6 +30,7 @@ const toolConfig: Record<ElementType, { label: string; defaultSize: [number, num
 export function Visual() {
     const [tab, setTab] = useState('2d')
     const [activeTool, setActiveTool] = useState<ElementType>('select')
+    const orgId = useAuthStore(s => s.orgId) || import.meta.env.VITE_ORG_ID || 'namka-events'
     const { elements, addElement, deleteElement, clearCanvas, selectElement, updateElement, selectedId, applyAILayout, undoAILayout, previousElements, lastAIResult } = useLayoutStore()
 
     // AI Panel State
@@ -36,13 +38,37 @@ export function Visual() {
     const [venueDepth, setVenueDepth] = useState(40)
     const [isGenerating, setIsGenerating] = useState(false)
     const [isSaving, setIsSaving] = useState(false)
+    const [aiError, setAiError] = useState<string | null>(null)
+    const [aiSuccessCounter, setAiSuccessCounter] = useState(0)
 
     const canvasRef = useRef<HTMLCanvasElement>(null)
     const [dragging, setDragging] = useState<string | null>(null)
+    const [dragStartSnapshot, setDragStartSnapshot] = useState<any[] | null>(null)
     const [offset, setOffset] = useState({ x: 0, y: 0 })
+    const [isHoveringElement, setIsHoveringElement] = useState(false)
     const [preselectedTemplate, setPreselectedTemplate] = useState<string | undefined>()
+    const [saveError, setSaveError] = useState<string | null>(null)
+    const [saveSuccess, setSaveSuccess] = useState(false)
 
-    const GRID = 20
+    // Local undo history — snapshots of elements array
+    const [undoHistory, setUndoHistory] = useState<any[][]>([])
+
+    const GRID = 10  // 10px = 1m at scale 1:100
+
+    const pushUndo = useCallback((snapshot: any[]) => {
+        setUndoHistory(prev => [...prev.slice(-30), snapshot])  // keep last 30 states
+    }, [])
+
+    const handleUndo = useCallback(() => {
+        setUndoHistory(prev => {
+            if (prev.length === 0) return prev
+            const last = prev[prev.length - 1]
+            // Restore via store — clear then re-add each element
+            clearCanvas()
+            last.forEach((el: any) => addElement(el))
+            return prev.slice(0, -1)
+        })
+    }, [clearCanvas, addElement])
 
     // Draw canvas
     const draw = useCallback(() => {
@@ -68,7 +94,7 @@ export function Visual() {
         // Scale indicator
         ctx.fillStyle = '#a8a29e'
         ctx.font = '10px Plus Jakarta Sans'
-        ctx.fillText('Scale 1:100 · Grid = 2m', 8, canvas.height - 10)
+        ctx.fillText('Scale 1:100 · Grid = 1m', 8, canvas.height - 10)
 
         // Elements
         elements.forEach((el) => {
@@ -88,7 +114,7 @@ export function Visual() {
 
     useEffect(() => { draw() }, [draw])
 
-    // Keyboard delete & escape
+    // Keyboard delete, escape & undo
     useEffect(() => {
         const handleKeyDown = (e: KeyboardEvent) => {
             if (e.key === 'Escape') {
@@ -96,14 +122,19 @@ export function Visual() {
                 selectElement(null)
             }
             if ((e.key === 'Backspace' || e.key === 'Delete') && selectedId) {
-                // Don't delete if user is typing in an input
                 if (document.activeElement?.tagName === 'INPUT' || document.activeElement?.tagName === 'TEXTAREA') return
+                pushUndo([...elements])
                 deleteElement(selectedId)
+            }
+            if ((e.ctrlKey || e.metaKey) && e.key === 'z') {
+                e.preventDefault()
+                if (document.activeElement?.tagName === 'INPUT' || document.activeElement?.tagName === 'TEXTAREA') return
+                handleUndo()
             }
         }
         window.addEventListener('keydown', handleKeyDown)
         return () => window.removeEventListener('keydown', handleKeyDown)
-    }, [selectedId, deleteElement, selectElement])
+    }, [selectedId, deleteElement, selectElement, handleUndo, pushUndo, elements])
 
     const snapToGrid = (v: number) => Math.round(v / GRID) * GRID
 
@@ -114,7 +145,6 @@ export function Visual() {
         const y = e.clientY - rect.top
 
         if (activeTool === 'select') {
-            // Find clicked element (reverse order so top element gets clicked first)
             const clickedEl = [...elements].reverse().find(
                 (el) => x >= el.x && x <= el.x + el.width && y >= el.y && y <= el.y + el.height
             )
@@ -122,11 +152,14 @@ export function Visual() {
                 selectElement(clickedEl.id)
                 setDragging(clickedEl.id)
                 setOffset({ x: x - clickedEl.x, y: y - clickedEl.y })
+                // Snapshot before drag starts so we can undo the move
+                setDragStartSnapshot([...elements])
             } else {
                 selectElement(null)
             }
         } else {
-            // Placement mode
+            // Placement mode — snapshot before placing
+            pushUndo([...elements])
             const snapX = snapToGrid(x)
             const snapY = snapToGrid(y)
             const config = toolConfig[activeTool]
@@ -140,29 +173,51 @@ export function Visual() {
                 strokeColor: config.stroke,
             }
             addElement(newEl as any)
-            selectElement(newEl.id) // Select it upon placement
+            selectElement(newEl.id)
         }
     }
 
     const handleMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
-        if (dragging && activeTool === 'select') {
-            const rect = canvasRef.current!.getBoundingClientRect()
-            const x = e.clientX - rect.left
-            const y = e.clientY - rect.top
+        const rect = canvasRef.current!.getBoundingClientRect()
+        const x = e.clientX - rect.left
+        const y = e.clientY - rect.top
 
+        if (dragging && activeTool === 'select') {
             updateElement(dragging, {
                 x: snapToGrid(x - offset.x),
                 y: snapToGrid(y - offset.y)
             })
+        } else if (activeTool === 'select') {
+            // Detect hover over any element to show grab cursor
+            const hovering = elements.some(
+                (el) => x >= el.x && x <= el.x + el.width && y >= el.y && y <= el.y + el.height
+            )
+            setIsHoveringElement(hovering)
         }
     }
 
     const handleMouseUp = () => {
+        // If we were dragging, commit the pre-drag snapshot to undo history
+        if (dragging && dragStartSnapshot) {
+            pushUndo(dragStartSnapshot)
+            setDragStartSnapshot(null)
+        }
         setDragging(null)
     }
 
+    const handleMouseLeave = () => {
+        if (dragging && dragStartSnapshot) {
+            pushUndo(dragStartSnapshot)
+            setDragStartSnapshot(null)
+        }
+        setDragging(null)
+        setIsHoveringElement(false)
+    }
+
     const handleClearCanvas = () => {
-        if (window.confirm("Are you sure you want to clear the canvas? This cannot be undone.")) {
+        if (elements.length === 0) return
+        if (window.confirm('Clear the canvas? This cannot be undone.')) {
+            pushUndo([...elements])
             clearCanvas()
         }
     }
@@ -193,41 +248,69 @@ export function Visual() {
     }
 
     const handleGenerateDescription = async (params: GenerateLayoutParams) => {
+        // Confirm replace if canvas already has elements
+        if (elements.length > 0) {
+            const replace = window.confirm(
+                `Replace current layout (${elements.length} element${elements.length > 1 ? 's' : ''}) with AI-generated layout?`
+            )
+            if (!replace) return
+        }
+
         setIsGenerating(true)
+        setAiError(null)
         try {
             const result = await generateLayoutFromDescription(params)
             applyAILayout(result, toolConfig)
+            setAiSuccessCounter(c => c + 1)
         } catch (error) {
             console.error(error)
-            alert(error instanceof Error ? error.message : "Failed to generate layout")
+            setAiError(error instanceof Error ? error.message : 'Failed to generate layout')
         } finally {
             setIsGenerating(false)
         }
     }
 
     const handleGenerateTemplate = async (templateName: string, params: GenerateLayoutParams) => {
+        // Confirm replace if canvas already has elements
+        if (elements.length > 0) {
+            const replace = window.confirm(
+                `Replace current layout (${elements.length} element${elements.length > 1 ? 's' : ''}) with AI-generated layout?`
+            )
+            if (!replace) return
+        }
+
         setIsGenerating(true)
+        setAiError(null)
         try {
             const result = await generateLayoutFromTemplate(templateName, params)
             applyAILayout(result, toolConfig)
+            setAiSuccessCounter(c => c + 1)
         } catch (error) {
             console.error(error)
-            alert(error instanceof Error ? error.message : "Failed to generate layout")
+            setAiError(error instanceof Error ? error.message : 'Failed to generate layout')
         } finally {
             setIsGenerating(false)
         }
     }
 
     const handleSaveLayout = async () => {
+        if (elements.length === 0) {
+            setSaveError('Nothing to save — add some elements first.')
+            setTimeout(() => setSaveError(null), 4000)
+            return
+        }
         setIsSaving(true)
+        setSaveError(null)
+        setSaveSuccess(false)
         try {
-            if (!lastAIResult) throw new Error("No properties to save")
-            // Using a generic orgId 'default-org' as EventSaaS authentication routing is minimal
-            await import('@/services/layoutService').then(m => m.saveLayout('default-org', lastAIResult.layoutName || 'My Layout', elements, lastAIResult))
-            alert("Layout saved safely to vault!")
+            const layoutName = lastAIResult?.layoutName || 'My Layout'
+            await saveLayout(orgId, layoutName, elements, lastAIResult ?? undefined)
+            setSaveSuccess(true)
+            setTimeout(() => setSaveSuccess(false), 3000)
         } catch (error) {
-            console.error(error)
-            alert("Failed to save layout")
+            console.error('Save layout error:', error)
+            setSaveError(error instanceof Error ? error.message : 'Failed to save layout — check Firestore connection.')
+            setTimeout(() => setSaveError(null), 6000)
         } finally {
             setIsSaving(false)
         }
@@ -246,8 +329,8 @@ export function Visual() {
 
             {tab === '2d' && (
                 <div className="space-y-4">
-                    <div className="flex gap-4">
-                        {/* Toolbar */}
+                    <div className="flex gap-4 items-stretch">
+                        {/* ── Toolbar ── */}
                         <div className="w-[52px] flex-shrink-0">
                             <div className="bg-surface border border-border rounded-[10px] shadow-sm p-2 space-y-1">
                                 {(Object.keys(toolConfig) as ElementType[]).map((tool) => (
@@ -272,15 +355,33 @@ export function Visual() {
                             </div>
                         </div>
 
-                        {/* Canvas area */}
-                        <div className="flex-1">
+                        {/* ── Left column: Canvas + AI Summary below ── */}
+                        <div className="flex-1 flex flex-col gap-3">
                             <Card>
                                 <CardHeader
                                     title="2D Floor Plan"
                                     action={
                                         <div className="flex items-center gap-2">
+                                            <Button
+                                                size="sm"
+                                                variant="secondary"
+                                                icon={<Undo2 size={12} />}
+                                                onClick={handleUndo}
+                                                disabled={undoHistory.length === 0}
+                                                title="Undo last action (Ctrl+Z)"
+                                            >
+                                                Undo
+                                            </Button>
                                             <Button size="sm" variant="secondary" icon={<Download size={12} />} onClick={handleExportPDF}>Export PDF</Button>
-                                            <Button size="sm" icon={<Save size={12} />} onClick={handleSaveLayout} loading={isSaving}>Save Layout</Button>
+                                            <Button
+                                                size="sm"
+                                                icon={<Save size={12} />}
+                                                onClick={handleSaveLayout}
+                                                loading={isSaving}
+                                                className={saveSuccess ? '!bg-emerald-600 border-emerald-600' : ''}
+                                            >
+                                                {saveSuccess ? 'Saved!' : 'Save Layout'}
+                                            </Button>
                                         </div>
                                     }
                                 />
@@ -292,34 +393,32 @@ export function Visual() {
                                         onMouseDown={handleMouseDown}
                                         onMouseMove={handleMouseMove}
                                         onMouseUp={handleMouseUp}
-                                        onMouseLeave={handleMouseUp}
+                                        onMouseLeave={handleMouseLeave}
                                         className="w-full rounded-sm border border-border"
-                                        style={{ cursor: activeTool === 'select' ? (dragging ? 'grabbing' : 'default') : 'crosshair' }}
+                                        style={{
+                                            cursor: activeTool !== 'select'
+                                                ? 'crosshair'
+                                                : dragging
+                                                    ? 'grabbing'
+                                                    : isHoveringElement
+                                                        ? 'grab'
+                                                        : 'default'
+                                        }}
                                     />
                                 </div>
+                                {/* Inline save error — no alert() */}
+                                {saveError && (
+                                    <div className="mx-4 mb-3 px-3 py-2 bg-red-500/10 border border-red-500/20 rounded-md text-[11px] text-red-500 flex items-center gap-2">
+                                        <span className="font-bold">Save failed:</span> {saveError}
+                                    </div>
+                                )}
                             </Card>
-                        </div>
 
-                        {/* Elements panel */}
-                        <div className="w-[380px] flex-shrink-0 space-y-3">
-                            <AILayoutPanel
-                                onGenerateDescription={handleGenerateDescription}
-                                onGenerateTemplate={handleGenerateTemplate}
-                                isGenerating={isGenerating}
-                                venueWidth={venueWidth}
-                                onVenueWidthChange={setVenueWidth}
-                                venueDepth={venueDepth}
-                                onVenueDepthChange={setVenueDepth}
-                                canvasWidth={800}
-                                canvasHeight={480}
-                                scale={0.02} // Assuming 1px = 0.02m conceptually based on initial code
-                                preselectedTemplate={preselectedTemplate}
-                            />
-
+                            {/* AI undo banner */}
                             {lastAIResult && previousElements.length > 0 && (
                                 <div className="flex justify-between items-center bg-amber-500/10 border border-amber-500/20 p-2 rounded-md">
                                     <span className="text-[12px] text-amber-500">AI Layout generated. Not happy?</span>
-                                    <Button size="sm" variant="secondary" onClick={undoAILayout}>Undo changes</Button>
+                                    <Button size="sm" variant="secondary" onClick={undoAILayout}>Undo AI changes</Button>
                                 </div>
                             )}
 
@@ -328,7 +427,11 @@ export function Visual() {
                                 onSaveLayout={handleSaveLayout}
                                 isSaving={isSaving}
                             />
+                        </div>
 
+                        {/* ── Right column: Elements at top, AI Panel below ── */}
+                        <div className="w-[380px] flex-shrink-0 flex flex-col gap-3">
+                            {/* Selected element inspector — at top when visible */}
                             {selectedId && (
                                 <Card>
                                     <CardHeader title="Selected Element" />
@@ -344,13 +447,13 @@ export function Visual() {
                                                     </div>
                                                     <div className="flex justify-between">
                                                         <span className="text-ink4">Size:</span>
-                                                        <span className="font-semibold text-ink">{el.width / GRID * 2}m × {el.height / GRID * 2}m</span>
+                                                        <span className="font-semibold text-ink">{el.width / GRID}m × {el.height / GRID}m</span>
                                                     </div>
                                                     <div className="flex justify-between">
                                                         <span className="text-ink4">Position:</span>
-                                                        <span className="font-semibold text-ink">X: {el.x / GRID * 2}m, Y: {el.y / GRID * 2}m</span>
+                                                        <span className="font-semibold text-ink">X: {el.x / GRID}m, Y: {el.y / GRID}m</span>
                                                     </div>
-                                                    <Button size="sm" variant="secondary" className="w-full mt-2 !text-red hover:bg-red-light border-red/20" onClick={() => deleteElement(el.id)}>
+                                                    <Button size="sm" variant="secondary" className="w-full mt-2 !text-red hover:bg-red-light border-red/20" onClick={() => { pushUndo([...elements]); deleteElement(el.id) }}>
                                                         Remove Element
                                                     </Button>
                                                 </div>
@@ -360,18 +463,22 @@ export function Visual() {
                                 </Card>
                             )}
 
-                            {/* Elements list */}
+                            {/* Elements list — directly below inspector */}
                             <Card>
                                 <CardHeader title={`Elements (${elements.length})`} />
                                 <div className="max-h-48 overflow-y-auto divide-y divide-border">
                                     {elements.length === 0 ? (
                                         <div className="p-3 text-[11px] text-ink4 text-center">Click canvas to add elements</div>
                                     ) : elements.map((el) => (
-                                        <div key={el.id} className="px-3 py-2 flex items-center gap-2 hover:bg-surface2 transition-colors">
+                                        <div
+                                            key={el.id}
+                                            className={`px-3 py-2 flex items-center gap-2 hover:bg-surface2 transition-colors cursor-pointer ${el.id === selectedId ? 'bg-brand-light' : ''}`}
+                                            onClick={() => selectElement(el.id)}
+                                        >
                                             <div className="w-3 h-3 rounded-sm flex-shrink-0" style={{ backgroundColor: el.strokeColor }} />
                                             <span className="text-[12px] text-ink flex-1 truncate">{el.label}</span>
                                             <button
-                                                onClick={() => deleteElement(el.id)}
+                                                onClick={(e) => { e.stopPropagation(); pushUndo([...elements]); deleteElement(el.id) }}
                                                 className="text-ink4 hover:text-red text-[10px] cursor-pointer"
                                             >
                                                 ×
@@ -380,6 +487,25 @@ export function Visual() {
                                     ))}
                                 </div>
                             </Card>
+
+                            {/* AI Layout Panel — scrolls internally, fills remaining height */}
+                            <div className="flex-1 overflow-y-auto">
+                                <AILayoutPanel
+                                    onGenerateDescription={handleGenerateDescription}
+                                    onGenerateTemplate={handleGenerateTemplate}
+                                    isGenerating={isGenerating}
+                                    venueWidth={venueWidth}
+                                    onVenueWidthChange={setVenueWidth}
+                                    venueDepth={venueDepth}
+                                    onVenueDepthChange={setVenueDepth}
+                                    canvasWidth={800}
+                                    canvasHeight={480}
+                                    scale={0.02}
+                                    preselectedTemplate={preselectedTemplate}
+                                    errorMessage={aiError || undefined}
+                                    lastGenerationSuccess={aiSuccessCounter > 0 ? true : undefined}
+                                />
+                            </div>
                         </div>
                     </div>
 

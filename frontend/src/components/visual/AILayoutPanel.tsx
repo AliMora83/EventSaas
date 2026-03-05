@@ -2,7 +2,7 @@ import { useState, useMemo, useEffect } from 'react'
 import { Card, CardHeader, CardBody } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
 import { Tabs } from '@/components/ui/Tabs'
-import { Wand2, RefreshCw, LayoutTemplate, AlertCircle } from 'lucide-react'
+import { Wand2, RefreshCw, LayoutTemplate, AlertCircle, CheckCircle2, XCircle } from 'lucide-react'
 import { GenerateLayoutParams } from '@/types/layout'
 
 interface AILayoutPanelProps {
@@ -17,6 +17,10 @@ interface AILayoutPanelProps {
     canvasHeight: number
     scale: number
     preselectedTemplate?: string
+    /** Error message from parent — shown as non-blocking UI below button */
+    errorMessage?: string
+    /** Whether the last generation was successful */
+    lastGenerationSuccess?: boolean
 }
 
 const TEMPLATES = [
@@ -39,7 +43,9 @@ export default function AILayoutPanel({
     canvasWidth,
     canvasHeight,
     scale,
-    preselectedTemplate
+    preselectedTemplate,
+    errorMessage,
+    lastGenerationSuccess
 }: AILayoutPanelProps) {
     const [pax, setPax] = useState<number>(500)
     const [eventType, setEventType] = useState('Festival')
@@ -48,12 +54,34 @@ export default function AILayoutPanel({
     const [selectedTemplate, setSelectedTemplate] = useState<string>('')
     const [activeTab, setActiveTab] = useState('describe')
 
+    // Local error/success state for auto-dismiss
+    const [localError, setLocalError] = useState<string | null>(null)
+    const [showSuccess, setShowSuccess] = useState(false)
+
     useEffect(() => {
         if (preselectedTemplate) {
             setSelectedTemplate(preselectedTemplate)
             setActiveTab('template')
         }
     }, [preselectedTemplate])
+
+    // Show error from parent and auto-dismiss after 5s
+    useEffect(() => {
+        if (errorMessage) {
+            setLocalError(errorMessage)
+            const timer = setTimeout(() => setLocalError(null), 5000)
+            return () => clearTimeout(timer)
+        }
+    }, [errorMessage])
+
+    // Show success feedback and auto-dismiss after 2.5s
+    useEffect(() => {
+        if (lastGenerationSuccess) {
+            setShowSuccess(true)
+            const timer = setTimeout(() => setShowSuccess(false), 2500)
+            return () => clearTimeout(timer)
+        }
+    }, [lastGenerationSuccess])
 
     const tabs = [
         { key: 'describe', label: 'Describe Event' },
@@ -75,6 +103,9 @@ export default function AILayoutPanel({
     }, [pax, venueWidth, venueDepth, eventType])
 
     const handleGenerate = () => {
+        setLocalError(null)
+        setShowSuccess(false)
+
         const params: GenerateLayoutParams = {
             venueWidth,
             venueDepth,
@@ -98,7 +129,8 @@ export default function AILayoutPanel({
         <Card>
             <CardHeader title="AI Layout Generator" action={<Wand2 size={16} className="text-amber-500" />} />
             <CardBody>
-                <div className="space-y-4">
+                <div className={`space-y-4 transition-opacity ${isGenerating ? 'opacity-60' : ''}`}
+                    style={isGenerating ? { animation: 'ai-pulse 1.2s ease-in-out infinite' } : undefined}>
                     {/* Common Options */}
                     <div className="grid grid-cols-2 gap-3 text-[12px]">
                         <div>
@@ -153,7 +185,7 @@ export default function AILayoutPanel({
                         <div>
                             <label className="block text-ink3 text-[12px] mb-1 font-medium">Event Description</label>
                             <textarea
-                                placeholder="e.g. A large outdoor electronic music festival with a massive wide stage, two VIP decks on the sides, and a central FOH position 50m back."
+                                placeholder="e.g. Outdoor concert, 1200 pax, main stage + 2 side screens, FOH position centre, GA standing..."
                                 value={description}
                                 onChange={e => setDescription(e.target.value)}
                                 className="w-full h-24 border border-border rounded-sm p-2 bg-surface text-[12px] placeholder:text-ink4 focus:outline-none focus:border-brand resize-none"
@@ -181,12 +213,36 @@ export default function AILayoutPanel({
                         onClick={handleGenerate}
                         disabled={isGenerating || (activeTab === 'describe' ? !description.trim() : !selectedTemplate)}
                         className="w-full justify-center !bg-amber-600 hover:!bg-amber-700 !text-white border-0 py-2.5 h-auto text-[13px]"
-                        icon={isGenerating ? <RefreshCw size={14} className="animate-spin" /> : <LayoutTemplate size={14} />}
+                        icon={isGenerating ? <RefreshCw size={14} className="animate-spin" /> : showSuccess ? <CheckCircle2 size={14} /> : <LayoutTemplate size={14} />}
                     >
-                        {isGenerating ? 'Generating Layout...' : 'Generate Auto-Layout'}
+                        {isGenerating ? 'Generating Layout...' : showSuccess ? '✅ Layout Generated!' : 'Generate Auto-Layout'}
                     </Button>
+
+                    {/* Non-blocking error message — auto-dismisses after 5s */}
+                    {localError && (
+                        <div className="flex items-start gap-2 bg-red-500/10 border border-red-500/20 rounded-md p-2.5 text-[11px] text-red-500 animate-in fade-in">
+                            <XCircle size={14} className="shrink-0 mt-0.5" />
+                            <span>{localError}</span>
+                        </div>
+                    )}
+
+                    {/* Non-blocking success message */}
+                    {showSuccess && !localError && (
+                        <div className="flex items-start gap-2 bg-green-500/10 border border-green-500/20 rounded-md p-2.5 text-[11px] text-green-600">
+                            <CheckCircle2 size={14} className="shrink-0 mt-0.5" />
+                            <span>Layout generated and applied to canvas! Use Undo to revert.</span>
+                        </div>
+                    )}
                 </div>
             </CardBody>
+
+            {/* Pulse animation CSS */}
+            <style>{`
+                @keyframes ai-pulse {
+                    0%, 100% { opacity: 1; }
+                    50% { opacity: 0.6; }
+                }
+            `}</style>
         </Card>
     )
 }

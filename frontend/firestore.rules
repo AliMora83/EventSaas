@@ -106,6 +106,14 @@ service cloud.firestore {
         allow write:  if isAdmin(orgId);
       }
 
+      // ── Layouts (Visual page saved layouts) ─────────────────────────────
+      match /layouts/{layoutId} {
+        allow read:   if isMember(orgId);
+        allow create: if isEditor(orgId);
+        allow update: if isEditor(orgId);
+        allow delete: if isAdmin(orgId);
+      }
+
       // ── Budget Lines (top-level collection) ───────────────────────────────
       match /budgetLines/{lineId} {
         allow read:   if isMember(orgId);

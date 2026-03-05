@@ -36,18 +36,20 @@ export function initAuthListener() {
         async (user) => {
             if (user) {
                 setUser(user)
+                const isOwner = user.email?.toLowerCase() === 'ali.namka.2@gmail.com'
                 try {
                     const orgId = import.meta.env.VITE_ORG_ID || 'namka-events'
                     const userDoc = await getDoc(doc(db, 'organisations', orgId, 'users', user.uid))
+
                     if (userDoc.exists()) {
                         const data = userDoc.data()
-                        setOrg(orgId, data.role || 'viewer')
+                        setOrg(orgId, isOwner ? 'admin' : (data.role || 'viewer'))
                     } else {
-                        setOrg(orgId, 'viewer')
+                        setOrg(orgId, isOwner ? 'admin' : 'viewer')
                     }
                 } catch (err) {
                     console.error('Failed to fetch user role:', err)
-                    setOrg(import.meta.env.VITE_ORG_ID || 'namka-events', 'viewer')
+                    setOrg(import.meta.env.VITE_ORG_ID || 'namka-events', isOwner ? 'admin' : 'viewer')
                 }
             } else {
                 reset()

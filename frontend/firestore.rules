@@ -7,20 +7,24 @@ service cloud.firestore {
       return request.auth != null;
     }
 
-    function userRole(orgId) {
+    function isOwner() {
+      return isSignedIn() && request.auth.token.email == 'ali.namka.2@gmail.com';
+    }
+
+    function getRole(orgId) {
       return get(/databases/$(database)/documents/organisations/$(orgId)/users/$(request.auth.uid)).data.role;
     }
 
     function isAdmin(orgId) {
-      return isSignedIn() && userRole(orgId) == 'admin';
+      return isOwner() || (isSignedIn() && exists(/databases/$(database)/documents/organisations/$(orgId)/users/$(request.auth.uid)) && getRole(orgId) == 'admin');
     }
 
     function isMember(orgId) {
-      return isSignedIn() && userRole(orgId) in ['admin', 'editor', 'viewer'];
+      return isOwner() || (isSignedIn() && exists(/databases/$(database)/documents/organisations/$(orgId)/users/$(request.auth.uid)) && getRole(orgId) in ['admin', 'editor', 'viewer']);
     }
 
     function isEditor(orgId) {
-      return isSignedIn() && userRole(orgId) in ['admin', 'editor'];
+      return isOwner() || (isSignedIn() && exists(/databases/$(database)/documents/organisations/$(orgId)/users/$(request.auth.uid)) && getRole(orgId) in ['admin', 'editor']);
     }
 
     // ── Top-level users collection (auth bootstrap lookup) ─────────────────

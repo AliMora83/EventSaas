@@ -1,0 +1,72 @@
+name: Generate PROJECT-SYNC.json
+
+on:
+  push:
+    branches:
+      - main
+      - master
+
+permissions:
+  contents: write
+
+jobs:
+  generate-project-sync:
+    runs-on: ubuntu-latest
+    if: github.actor != 'github-actions[bot]'
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Generate PROJECT-SYNC.json
+        run: |
+          TIMESTAMP=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
+          TODAY=$(date -u '+%Y-%m-%d')
+          ACTOR="${{ github.actor }}"
+          COMMIT_MSG="${{ github.event.head_commit.message }}"
+          SHORT_SHA="${{ github.sha }}"
+          SHORT_SHA="${SHORT_SHA:0:7}"
+          VERSION=$(grep -oP 'Version: \K[0-9]+\.[0-9]+\.[0-9]+' Master.md 2>/dev/null || echo "0.0.0")
+
+          cat > PROJECT-SYNC.json << ENDJSON
+          {
+            "project": "EventSaaS",
+            "repo": "AliMora83/EventSAAS",
+            "branch": "main",
+            "stack": "TypeScript / Next.js 15 / Odoo XML-RPC / PostgreSQL / Docker",
+            "status": "Active",
+            "priority": 1,
+            "priority_label": "🟢 Priority 1 — High Impact",
+            "progress_percent": 35,
+            "progress_label": "Odoo integration core active · Organizer dashboard in dev",
+            "current_phase": "Phase 2 — Dashboard & Management",
+            "next_step": "Implement attendee check-in via Event Serve integration",
+            "blocker": null,
+            "live_url": "https://events.namka.org",
+            "deploy_target": "Hostinger VPS (Docker)",
+            "agents": ["Antigravity"],
+            "version": "$VERSION",
+            "last_push": {
+              "timestamp": "$TIMESTAMP",
+              "actor": "$ACTOR",
+              "commit_message": "$COMMIT_MSG",
+              "sha": "$SHORT_SHA"
+            },
+            "last_updated": "$TODAY"
+          }
+          ENDJSON
+
+          sed -i 's/^          //' PROJECT-SYNC.json
+          echo "PROJECT-SYNC.json generated."
+
+      - name: Commit PROJECT-SYNC.json
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          git diff --quiet PROJECT-SYNC.json || (
+            git add PROJECT-SYNC.json &&
+            git commit -m "chore: update PROJECT-SYNC.json [skip ci]" &&
+            git push
+          )

@@ -1,27 +1,25 @@
 {
-  "project": "EventSaas",
-  "repo": "AliMora83/eventsaas",
+  "project": "EventSaaS",
+  "repo": "AliMora83/EventSAAS",
   "branch": "main",
-  "stack": "TypeScript / Next.js / Tailwind",
+  "stack": "TypeScript / Next.js 15 / Odoo XML-RPC / PostgreSQL / Docker",
   "status": "Active",
-  "priority": 2,
-  "priority_label": "🟡 Priority 2 — Active Development",
-  "progress_percent": 50,
-  "progress_label": "Development in progress",
-  "current_phase": "Phase 1",
-  "next_step": "See Master.md",
+  "priority": 1,
+  "priority_label": "🟢 Priority 1 — High Impact",
+  "progress_percent": 35,
+  "progress_label": "Odoo integration core active · Organizer dashboard in dev",
+  "current_phase": "Phase 2 — Dashboard & Management",
+  "next_step": "Implement attendee check-in via Event Serve integration",
   "blocker": null,
-  "live_url": null,
-  "deploy_target": "Hostinger VPS",
-  "agents": [
-    "AG"
-  ],
+  "live_url": "https://events.namka.org",
+  "deploy_target": "Hostinger VPS (Docker)",
+  "agents": ["Antigravity"],
   "version": "0.0.0",
   "last_push": {
-    "timestamp": "2026-03-31T22:13:56.641Z",
+    "timestamp": "2026-03-31T22:14:08Z",
     "actor": "AliMora83",
-    "commit_message": "chore: implement MACP documentation and sync infrastructure",
-    "sha": "1651321"
+    "commit_message": "chore: bootstrap project-sync metadata",
+    "sha": "e642640"
   },
   "last_updated": "2026-03-31"
 }
